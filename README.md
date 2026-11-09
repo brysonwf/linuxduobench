@@ -13,10 +13,9 @@ This repository is **drivers and userspace only**:
 - the Debian setup;
 - the scripts that build a boot image you start from RAM with `fastboot boot`, which changes nothing on the phone.
 
-**The installer is a separate program and is not published.** The brick happened during an experiment outside the
-scope of this release: we were testing whether the phone would boot our own system with the bootloader locked to our
-own signing key. That experiment bricked our only stock test phone. Our installer
-wrote `boot_a` and a `vbmeta_a` signed with our own key, flipped the A/B slot flags with `sgdisk`, enrolled that key
+**The installer is a separate program and is not published.** The brick happened during **experimental testing**
+outside the scope of this release: we were testing whether the phone would boot our own system with the bootloader
+locked to our own signing key. That test bricked our only stock test phone. Our experimental installer wrote `boot_a` and a `vbmeta_a` signed with our own key, flipped the A/B slot flags with `sgdisk`, enrolled that key
 (`avb_custom_key`) and locked the bootloader. After that the phone boots no image at all, not even Microsoft's own
 (fastboot only). We know which steps did it, not yet which internal state they broke.
 
