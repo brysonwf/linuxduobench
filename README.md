@@ -2,12 +2,19 @@
 
 **Working mainline Linux 6.19 on the Microsoft Surface Duo (1st gen, SM8150).**
 
+Upstream-style Linux kernel drivers and a Debian system layer for Microsoft's dual-screen Android phone, the Surface
+Duo 1 (Qualcomm **Snapdragon 855 / SM8150**, codename "epsilon"). Both AMOLED screens, touch, the Adreno 640 GPU,
+the speaker, the camera and the hinge sensor work on a mainline kernel - no Android, no downstream 4.14 vendor kernel.
+**postmarketOS** (Phosh) and **Debian 13** (KDE Plasma Mobile) both ran on it, on the same kernel.
+
 > **Temporarily not maintained** - our test phone is bricked, and we're looking for a cheap Surface Duo to continue.
 > Forks and patches welcome. Open items and notes are in [`docs/`](docs/README.md).
 
 ## Drivers only
-Kernel patches, hardware services, Debian setup, and scripts to build a RAM boot image (`fastboot boot` - nothing is
-written to the phone). **No installer.** Nothing here writes boot partitions, the partition table or the lock state.
+A Linux kernel patch series (device tree, DSI panel, HID-over-SPI touch, audio, camera, charger and more), the
+systemd services that bring the Duo's hardware up, a Debian setup, and scripts to build a RAM boot image for the
+phone's own Qualcomm bootloader (ABL, `fastboot boot` - nothing is written to the phone). **No installer.** Nothing
+here writes boot partitions, the partition table or the bootloader lock state.
 
 ## Continuing the driver work: use the RAM boot image
 The RAM boot image was built to **iterate fast**, and it's what to use to continue the driver work. Build a kernel,
@@ -36,7 +43,14 @@ Mainline v6.19 + 90 patches, tested on one phone:
 - **Power key** - `qcom-pon` + `pm8941-pwrkey`
 - **CPU** - all 8 cores incl. the 2.84 GHz prime core; suspend (s2idle)
 
-Debian 13 + Plasma Mobile runs on top.
+On top: Debian 13 "trixie" with KDE Plasma Mobile on both screens, Waydroid for Android apps, PipeWire audio,
+libcamera, and our own apps - [Hingeboard](https://github.com/brysonwf/hingeboard) (laptop mode: an on-screen keyboard
+on one screen, a trackpad desktop on the other) and [Porchlight](https://github.com/brysonwf/porchlight) (an
+OpenSnitch firewall UI). postmarketOS with Phosh ran on both screens too.
+
+**GPU:** Mesa freedreno (OpenGL ES) and Turnip (Vulkan) on the Adreno 640. glmark2 at 1587x2118: terrain 74 fps,
+refract 59, shadow 333, jellyfish 387, ideas 703; vkcube 59 fps. Ten minutes of the heaviest scenes held 585 MHz at
+58 °C with no throttling.
 
 **Not yet:** GPS fix, pen, calls/SMS.
 
@@ -52,7 +66,8 @@ No firmware or Microsoft files are included; the phone's own partitions supply t
 - `tools/linux/system/` - hardware services
 - `tools/linux/debian/` - Debian setup
 - `tools/linux/abl/`, `make-*.sh` - RAM boot image
-- `docs/` - research notes, incl. decoded speaker traces for Windows ports
+- `docs/` - research notes for every driver, the decoded WCD9340/WSA8815 speaker register traces (useful for Windows
+  on ARM / WOA-Project driver ports), and the Duo 1 bootloader facts
 
 Build and boot: [INSTALL.md](INSTALL.md).
 
@@ -74,6 +89,11 @@ That installer is separate and **not published** - none of its code is here. (Th
 tools like `sgdisk` and `qbootctl`; don't use them on boot partitions without a backup.)
 
 **If you modify a Duo 1:** never relock the bootloader. There is no public recovery loader.
+
+## Related projects
+- [WOA-Project](https://github.com/WOA-Project) - Windows on ARM and UEFI for the Surface Duo
+- [postmarketOS](https://postmarketos.org) and the sm8150-mainline community - mainline Linux on Qualcomm phones
+- [duo-de](https://github.com/Archfx/duo-de) - a custom Android ROM for the Surface Duo
 
 ## How this was made
 Engineered by Claude (Anthropic's AI); Bryson directed and tested. Bug reports: GitHub issues.
