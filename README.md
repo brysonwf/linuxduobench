@@ -1,6 +1,6 @@
 # Linux Duo Bench
 
-Mainline Linux drivers for the **Microsoft Surface Duo (1st gen, SM8150)**.
+**Working mainline Linux 6.19 on the Microsoft Surface Duo (1st gen, SM8150).**
 
 > **Not actively maintained.** Forks and patches welcome. Open items and notes are in [`docs/`](docs/README.md).
 
