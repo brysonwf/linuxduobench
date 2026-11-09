@@ -9,6 +9,11 @@
 Kernel patches, hardware services, Debian setup, and scripts to build a RAM boot image (`fastboot boot` - nothing is
 written to the phone). **No installer.** Nothing here writes boot partitions, the partition table or the lock state.
 
+## Continuing the driver work: use the RAM boot image
+The RAM boot image was built to **iterate fast**, and it's what to use to continue the driver work. Build a kernel,
+`fastboot boot` it, test over SSH on the USB cable, power off, repeat. Each try runs from RAM, so a bad kernel costs a
+reboot, never the phone. That's how every driver here was brought up. Steps: [INSTALL.md](INSTALL.md).
+
 ## What works
 Mainline v6.19 + 90 patches, tested on one phone:
 - **Displays** - `panel-microsoft-surface-duo` (ours) on msm DSI/DPU with DSC
