@@ -2,10 +2,11 @@
 
 **Working mainline Linux 6.19 on the Microsoft Surface Duo (1st gen, SM8150).**
 
-Upstream-style Linux kernel drivers and a Debian system layer for Microsoft's dual-screen Android phone, the Surface
-Duo 1 (Qualcomm **Snapdragon 855 / SM8150**, codename "epsilon"). Both AMOLED screens, touch, the Adreno 640 GPU,
-the speaker, the camera and the hinge sensor work on a mainline kernel - no Android, no downstream 4.14 vendor kernel.
-**postmarketOS** (Phosh) and **Debian 13** (KDE Plasma Mobile) both ran on it, on the same kernel.
+### postmarketOS and Debian both run on it, on both screens.
+
+First postmarketOS with Phosh, then Debian 13 with KDE Plasma Mobile - real Linux distributions on Microsoft's
+dual-screen phone (Qualcomm **Snapdragon 855 / SM8150**, codename "epsilon"), on a mainline kernel with no Android and
+no vendor kernel. Both AMOLED screens, touch, the Adreno 640 GPU, the speaker, the camera and the hinge sensor work.
 
 > **Temporarily not maintained** - our test phone is bricked, and we're looking for a cheap Surface Duo to continue.
 > Forks and patches welcome. Open items and notes are in [`docs/`](docs/README.md).
