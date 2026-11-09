@@ -39,6 +39,10 @@ are meant as a specification.
 - **Fingerprint:** `drivers/secure-world.md` covers QSEECOM on mainline: loading the TrustZone app, the listeners and
   the enrollment flow, with the scope we kept (no key extraction, no bypass).
 
+## The brick
+- [`bootloader-facts.md`](bootloader-facts.md) - what the Duo 1 bootloader does and refuses; read before modifying one.
+- [`brick-record.md`](brick-record.md) - exactly how our phone was bricked, every recovery attempt, the findings.
+
 ## Index
 | Folder | Contents |
 |---|---|

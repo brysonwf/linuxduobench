@@ -16,6 +16,18 @@ Each step: **Do / Check / If it fails**. For an AI agent: follow the hard rules 
 - Never read display registers (`0x0ae0xxxx`) while the display is off. Never touch the apps SMMU (`0x15000000`).
 - Charging and battery work: read `/sys/class/power_supply/bq27742-*/temp` first. Stop outside 15-35 °C.
 
+## Quick start: the prebuilt image (no building)
+1. Download `duo-ram-6.19.0-00090.img` from the repository's **Releases** page and check its SHA-256.
+2. Add your SSH key: `python3 tools/linux/abl/add-ssh-key.py duo-ram-6.19.0-00090.img ~/.ssh/id_ed25519.pub duo-ram-key.img`
+3. Bootloader menu (from off: volume-down + power), then `fastboot --set-active=a` and at once `fastboot boot duo-ram-key.img`.
+4. `ssh root@169.254.66.1` (or `10.66.0.1`) over the USB cable.
+
+It is a RAM shell for driver work. Both screens, touch and USB networking come up. Wi-Fi, Bluetooth, the modem,
+sound, sensors and camera stay off (the command line turns them off; the audio DSP starts, with its firmware read from
+the phone's `modem_a` mounted read-only). It writes nothing to the phone. This exact image was built after our phone
+was bricked, from the same parts that booted on it, so it has not itself run on a phone yet. To build your own, follow
+the steps below.
+
 ## 0. You need
 - A Surface Duo 1 whose bootloader is unlocked. `fastboot flashing unlock` erases the phone's data. Unlock only if
   you accept that, and never relock it afterwards.

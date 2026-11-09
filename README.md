@@ -12,7 +12,8 @@ written to the phone). **No installer.** Nothing here writes boot partitions, th
 ## Continuing the driver work: use the RAM boot image
 The RAM boot image was built to **iterate fast**, and it's what to use to continue the driver work. Build a kernel,
 `fastboot boot` it, test over SSH on the USB cable, power off, repeat. Each try runs from RAM, so a bad kernel costs a
-reboot, never the phone. That's how every driver here was brought up. Steps: [INSTALL.md](INSTALL.md).
+reboot, never the phone. That's how every driver here was brought up. A prebuilt image is on the **Releases** page;
+steps (prebuilt or your own build): [INSTALL.md](INSTALL.md).
 
 ## What works
 Mainline v6.19 + 90 patches, tested on one phone:
