@@ -1,0 +1,1695 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:47 -0500
+Subject: [PATCH] arm64: dts: qcom: sm8150-microsoft-surface-duo: describe the
+ workbench hardware
+
+Panels, touch, audio (WCD9340 + WSA8815, DMIC2/3), charger, GPU, sensors DSPs, Wi-Fi/BT, USB-C, Venus, CAMSS +
+IMX351 (rotation 90, verified) + DW9719 lens, flash LED, haptics, as dtsi files included by the board DTS.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ .../sm8150-microsoft-surface-duo-audio.dtsi   | 274 ++++++++++++++
+ .../sm8150-microsoft-surface-duo-camera.dtsi  |  83 ++++
+ ...0-microsoft-surface-duo-camss-noiommu.dtsi |  11 +
+ .../sm8150-microsoft-surface-duo-camss.dtsi   | 109 ++++++
+ .../sm8150-microsoft-surface-duo-charger.dtsi |  64 ++++
+ .../sm8150-microsoft-surface-duo-display.dtsi | 113 ++++++
+ .../sm8150-microsoft-surface-duo-gpu.dtsi     |  14 +
+ ...8150-microsoft-surface-duo-imx351-bob.dtsi |  11 +
+ .../sm8150-microsoft-surface-duo-imx351.dtsi  |  87 +++++
+ .../sm8150-microsoft-surface-duo-ipa.dtsi     |  73 ++++
+ ...sm8150-microsoft-surface-duo-l17a-3v0.dtsi |  12 +
+ .../sm8150-microsoft-surface-duo-mic.dtsi     |  46 +++
+ .../sm8150-microsoft-surface-duo-usbc.dtsi    | 119 ++++++
+ ...0-microsoft-surface-duo-venus-axicrst.dtsi |  74 ++++
+ .../sm8150-microsoft-surface-duo-venus.dtsi   |  86 +++++
+ ...m8150-microsoft-surface-duo-workbench.dtsi | 354 ++++++++++++++++++
+ .../dts/qcom/sm8150-microsoft-surface-duo.dts |  12 +
+ 17 files changed, 1542 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camera.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-charger.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-display.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-gpu.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-mic.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-usbc.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
+new file mode 100644
+index 000000000..1a1ea787c
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
+@@ -0,0 +1,274 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1 (SM8150, board DV_A) on-device speaker: Slimbus NGD + WCD9340 codec
++ * + ONE WSA8815 smart amp (SpkrLeft) on the codec's SoundWire master + Q6 APR sound card.
++ *
++ * Structure ported from mainline sdm845.dtsi / sdm845-wcd9340.dtsi / sdm845-db845c.dts
++ * (same WCD9340 + WSA881x). SM8150/Duo values come from the Duo's own Android device
++ * tree (boot_a dtb #11 "SM8150 v2" + dtbo overlay #31 "Surface Duo DV_A") and the live
++ * Android kernel log -- see docs/research/24-audio.md in this repo.
++ *
++ * Included at the end of arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts by
++ * tools/linux/apply-dts.sh.
++ */
++#include <dt-bindings/clock/qcom,rpmh.h>
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/soc/qcom,apr.h>
++#include <dt-bindings/sound/qcom,q6afe.h>
++#include <dt-bindings/sound/qcom,q6asm.h>
++
++/ {
++	/* Required by the Duo's ABL to pick this DTB (Android dtb: msm-id 0x153 v2, DV_A board-id). */
++	qcom,msm-id = <0x153 0x20000>;
++	qcom,board-id = <0x08 0x10>;
++
++	/*
++	 * Console on the panel. gus's UEFI provides NO GOP/screen_info to the kernel EFI stub, but keeps the
++	 * left panel scanning out its "Display Reserved" buffer (Silicon/QC/Sm8150 PlatformMemoryMapLib:
++	 * 0x80600000, size 0x2400000; reserved in the EFI memory map) at 1350x1800 @ 32bpp (SurfaceDuo1.dsc
++	 * PcdMipiFrameBuffer*). The panel is natively portrait. (Android ABL's splash is at 0x9c000000.)
++	 */
++	reserved-memory {
++		cont_splash_mem: memory@9c000000 {
++			reg = <0x0 0x9c000000 0x0 0x2400000>;
++			no-map;
++		};
++	};
++
++	chosen {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		framebuffer0: framebuffer@80600000 {
++			compatible = "simple-framebuffer";
++			reg = <0x0 0x80600000 0x0 (1350 * 1800 * 4)>;
++			width = <1350>;
++			height = <1800>;
++			stride = <(1350 * 4)>;
++			format = "a8r8g8b8";
++		};
++	};
++
++	sound: sound {
++		compatible = "qcom,sdm845-sndcard";
++		model = "Surface-Duo";
++
++		mm1-dai-link {
++			link-name = "MultiMedia1";
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
++			};
++		};
++
++		slim-dai-link {
++			link-name = "SLIM Playback";
++			cpu {
++				sound-dai = <&q6afedai SLIMBUS_0_RX>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++
++			codec {
++				/* Android speaker-mono: SLIM RX0 (AIF1_PB) -> RX INT7 -> COMP7 -> SpkrLeft */
++				sound-dai = <&left_spkr>, <&swm 0>, <&wcd9340 0>;
++			};
++		};
++
++	};
++};
++
++&soc {
++	/*
++	 * Software reset: PSCI SYSTEM_RESET hangs on this firmware (reboot -f / sysrq-b froze the kernel).
++	 * Qualcomm boards reset by dropping PMIC PS_HOLD (drivers/power/reset/msm-poweroff.c).
++	 * Android SM8150 DT: restart@c264000 { compatible = "qcom,pshold"; reg = <0xc264000 0x4 ...>; }
++	 */
++	restart@c264000 {
++		compatible = "qcom,pshold";
++		reg = <0 0x0c264000 0 0x4>;
++	};
++
++	/* Android SM8150: slim@171c0000 reg <0x171c0000 0x2c000 0x17184000 0x2c000>, irqs 0xa3/0xa4 */
++	slimbam: dma-controller@17184000 {
++		compatible = "qcom,bam-v1.7.4", "qcom,bam-v1.7.0";
++		qcom,controlled-remotely;
++		reg = <0 0x17184000 0 0x2c000>;
++		num-channels = <31>;	/* sm8150-linux-mainline tested value */
++		interrupts = <GIC_SPI 164 IRQ_TYPE_LEVEL_HIGH>;
++		#dma-cells = <1>;
++		qcom,ee = <1>;
++		qcom,num-ees = <2>;
++		/* Android lists SIDs 0x1b46/8, 0x1b4d/2, 0x1b50/1; sm8150-linux-mainline uses 0x1b46 alone */
++		iommus = <&apps_smmu 0x1b46 0x0>;
++	};
++
++	slim: slim-ngd@171c0000 {
++		compatible = "qcom,slim-ngd-v2.1.0";
++		reg = <0 0x171c0000 0 0x2c000>;
++		interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>;
++		dmas = <&slimbam 3>, <&slimbam 4>;
++		dma-names = "rx", "tx";
++		iommus = <&apps_smmu 0x1b46 0x0>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		slim@1 {
++			reg = <1>;
++			#address-cells = <2>;
++			#size-cells = <0>;
++
++			wcd9340_ifd: ifd@0,0 {
++				compatible = "slim217,250";
++				reg = <0 0>;
++			};
++
++			wcd9340: codec@1,0 {
++				compatible = "slim217,250";
++				reg = <1 0>;
++				slim-ifc-dev = <&wcd9340_ifd>;
++				#sound-dai-cells = <1>;
++
++				/* Android wcd9xxx-irq: qcom,gpio-connect = <&tlmm 133>; Linux uses level-high */
++				interrupts-extended = <&tlmm 133 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-controller;
++				#interrupt-cells = <1>;
++				pinctrl-0 = <&wcd_intr_default>;
++				pinctrl-names = "default";
++
++				/* Android msm_cdc_pinctrl@143: qcom,cdc-rst-n-gpio = <&tlmm 143> */
++				reset-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;
++
++				/* Android tavil: cdc-vdd-buck/buck-sido/tx-h/rx-h/vddpx-1 = pm8150_s4 (1.8 V) */
++				vdd-buck-supply = <&vreg_s4a_1p8>;
++				vdd-buck-sido-supply = <&vreg_s4a_1p8>;
++				vdd-tx-supply = <&vreg_s4a_1p8>;
++				vdd-rx-supply = <&vreg_s4a_1p8>;
++				vdd-io-supply = <&vreg_s4a_1p8>;
++
++				clock-names = "extclk";
++				clocks = <&rpmhcc RPMH_LN_BB_CLK2>;
++				#clock-cells = <0>;
++				clock-frequency = <9600000>;	/* Android qcom,tavil-mclk-clk-freq = 0x927c00 */
++				clock-output-names = "mclk";
++
++				qcom,micbias1-microvolt = <1800000>;
++				qcom,micbias2-microvolt = <1800000>;
++				qcom,micbias3-microvolt = <1800000>;
++				qcom,micbias4-microvolt = <1800000>;
++
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				wcdgpio: gpio-controller@42 {
++					compatible = "qcom,wcd9340-gpio";
++					gpio-controller;
++					#gpio-cells = <2>;
++					reg = <0x42 0x2>;
++				};
++
++				swm: soundwire@c85 {
++					compatible = "qcom,soundwire-v1.3.0";
++					reg = <0xc85 0x40>;
++					interrupts-extended = <&wcd9340 20>;
++					qcom,dout-ports = <6>;
++					qcom,din-ports = <2>;
++					qcom,ports-sinterval-low = /bits/ 8 <0x07 0x1f 0x3f 0x7 0x1f 0x3f 0x0f 0x0f>;
++					qcom,ports-offset1 = /bits/ 8 <0x01 0x02 0x0c 0x6 0x12 0x0d 0x07 0x0a>;
++					qcom,ports-offset2 = /bits/ 8 <0x00 0x00 0x1f 0x00 0x00 0x1f 0x00 0x00>;
++					#sound-dai-cells = <1>;
++					clocks = <&wcd9340>;
++					clock-names = "iface";
++					#address-cells = <2>;
++					#size-cells = <0>;
++
++					/*
++					 * Android: exactly one amp enumerates, wsa881x.21170213 (2117xxxx = WSA8815,
++					 * part 0x2110; unique id 3). SpkrRight does not exist on the Duo.
++					 */
++					left_spkr: speaker@0,3 {
++						compatible = "sdw10217211000";
++						reg = <0 3>;
++						/* Android wsa_en_active: tlmm 142 output-high = enabled; SD_N is active-low */
++						powerdown-gpios = <&tlmm 142 GPIO_ACTIVE_LOW>;
++						#thermal-sensor-cells = <0>;
++						sound-name-prefix = "SpkrLeft";
++						#sound-dai-cells = <0>;
++					};
++				};
++			};
++		};
++	};
++};
++
++&remoteproc_adsp {
++	glink-edge {
++		apr {
++			compatible = "qcom,apr-v2";
++			qcom,glink-channels = "apr_audio_svc";
++			qcom,domain = <APR_DOMAIN_ADSP>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			qcom,intents = <512 20>;
++
++			service@3 {
++				reg = <APR_SVC_ADSP_CORE>;
++				compatible = "qcom,q6core";
++				qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
++			};
++
++			q6afe: service@4 {
++				compatible = "qcom,q6afe";
++				reg = <APR_SVC_AFE>;
++				qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
++				q6afedai: dais {
++					compatible = "qcom,q6afe-dais";
++					#address-cells = <1>;
++					#size-cells = <0>;
++					#sound-dai-cells = <1>;
++				};
++			};
++
++			q6asm: service@7 {
++				compatible = "qcom,q6asm";
++				reg = <APR_SVC_ASM>;
++				qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
++				q6asmdai: dais {
++					compatible = "qcom,q6asm-dais";
++					#address-cells = <1>;
++					#size-cells = <0>;
++					#sound-dai-cells = <1>;
++					/* Android qcom,msm-audio-ion: iommus = <&apps_smmu 0x1b21 0x0> */
++					iommus = <&apps_smmu 0x1b21 0x0>;
++
++					dai@0 {
++						reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
++					};
++				};
++			};
++
++			q6adm: service@8 {
++				compatible = "qcom,q6adm";
++				reg = <APR_SVC_ADM>;
++				qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
++				q6routing: routing {
++					compatible = "qcom,q6adm-routing";
++					#sound-dai-cells = <0>;
++				};
++			};
++		};
++	};
++};
++
++&tlmm {
++	wcd_intr_default: wcd-intr-default-state {
++		pins = "gpio133";
++		function = "gpio";
++		bias-pull-down;
++		drive-strength = <2>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camera.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camera.dtsi
+new file mode 100644
+index 000000000..04c0797f3
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camera.dtsi
+@@ -0,0 +1,83 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: camera step 1 = the CCI (camera I2C) bus, to find the rear/front sensor (docs/research/33 "CAMERA").
++ * From the phone's own DV_A board overlay (dtbo dt31, board-id <8 0x10> = this phone's subtype 16):
++ *   sensor (two second-source entries, same wiring): CSIPHY1, CCI0 master 1, MCLK1 19.2 MHz on gpio14,
++ *   reset gpio30 (CAM_RESET1), power gpio11 (CAM_POWER_GPIO1 = the board's vana 2.8 V / vdig 1.05 V switches),
++ *   vio 1.8 V. CCI0 = 0xac4a000, IRQ SPI 460, pins gpio17/18 (master 0) + gpio19/20 (master 1), 37.5 MHz.
++ * Node layout follows mainline sm8250's cci (same CCI v2). MCLK1 is listed as a CCI clock so it runs while the bus
++ * is up (test only); power + reset are driven from userspace (tools/linux/duo-camera-probe.sh) to keep the order.
++ * camcc-sm8150 + i2c-qcom-cci are modules, loaded by hand with the kernel log streamed (the camera NoC may stall
++ * like the video AXIC did).
++ */
++#include <dt-bindings/clock/qcom,sm8150-camcc.h>
++
++&{/soc@0} {
++	duo_cci0: cci@ac4a000 {
++		compatible = "qcom,sm8250-cci", "qcom,msm8996-cci";
++		#address-cells = <1>;
++		#size-cells = <0>;
++		reg = <0 0x0ac4a000 0 0x1000>;
++		interrupts = <GIC_SPI 460 IRQ_TYPE_EDGE_RISING>;
++		power-domains = <&camcc TITAN_TOP_GDSC>;
++
++		clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
++			 <&camcc CAM_CC_SLOW_AHB_CLK_SRC>,
++			 <&camcc CAM_CC_CPAS_AHB_CLK>,
++			 <&camcc CAM_CC_CCI_0_CLK>,
++			 <&camcc CAM_CC_CCI_0_CLK_SRC>,
++			 <&camcc CAM_CC_MCLK1_CLK>;
++		clock-names = "camnoc_axi", "slow_ahb_src", "cpas_ahb", "cci", "cci_src", "mclk1";
++		assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
++				  <&camcc CAM_CC_CCI_0_CLK>,
++				  <&camcc CAM_CC_MCLK1_CLK>;
++		assigned-clock-rates = <80000000>, <37500000>, <19200000>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&duo_cci0_m0 &duo_cci0_m1 &duo_cam_mclk1>;
++
++		duo_cci0_i2c0: i2c-bus@0 {
++			reg = <0>;
++			clock-frequency = <400000>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		duo_cci0_i2c1: i2c-bus@1 {
++			reg = <1>;
++			clock-frequency = <400000>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++	};
++};
++
++/* cam_vio (sensor I/O + CCI pull-ups) = PM8150L L1 1.8 V (DV_A __fixups__: pm8150l_l1); Linux left it off and every
++ * master-1 transfer timed out (2026-11-04). Test: keep it on. */
++&vreg_l1c_1p8 {
++	regulator-always-on;
++	regulator-boot-on;
++};
++
++&tlmm {
++	duo_cci0_m0: duo-cci0-m0-state {
++		pins = "gpio17", "gpio18";
++		function = "cci_i2c";
++		drive-strength = <2>;
++		bias-pull-up;
++	};
++
++	duo_cci0_m1: duo-cci0-m1-state {
++		pins = "gpio19", "gpio20";
++		function = "cci_i2c";
++		drive-strength = <2>;
++		bias-pull-up;
++	};
++
++	duo_cam_mclk1: duo-cam-mclk1-state {
++		pins = "gpio14";
++		function = "cam_mclk";
++		drive-strength = <2>;
++		bias-disable;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi
+new file mode 100644
+index 000000000..5ad504db4
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi
+@@ -0,0 +1,11 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Camera test override (step 9, docs/research/33 "CAMERA"): CAMSS without iommus. The VFE completes frames but its
++ * writes never land with the downstream ife bank (0x840 mask 0x620) mapped. Without the mapping the buffers get
++ * physical addresses: either the writes now land (stream passed through), or the SMMU reports a fault that names the
++ * real VFE stream IDs. Test only.
++ */
++
++&duo_camss {
++	/delete-property/ iommus;
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss.dtsi
+new file mode 100644
+index 000000000..89ce772f4
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss.dtsi
+@@ -0,0 +1,109 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: CAMSS (camera step 3, docs/research/33 "CAMERA"). SM8150's Titan 175 has the SAME CSID/VFE/CSIPHY
++ * addresses + IRQs as sdm845's Titan 170 (downstream DT: csid175 0xacb3000/IRQ 464, vfe175 0xacaf000/IRQ 465, csid1
++ * 0xacba000, vfe1 0xacb6000, csid-lite 0xacc8000, vfe-lite 0xacc4000, csiphy 0xac65000.. IRQ 477..) -> reuse mainline's
++ * "qcom,sdm845-camss" resources with SM8150 camcc clocks. SM8150 differences: no CAM_CC_SOC_AHB_CLK (CORE_AHB instead),
++ * GCC_CAMERA_HF_AXI_CLK, IFE_LITE_0_*, and the second lite pair / csiphy3 IRQ are left out. IOMMU = downstream
++ * msm_cam_smmu "ife" bank 0x840 mask 0x620 written as its 8 EXACT streams (one masked SMR hung the boot for Venus).
++ * No sensor port yet: this step only checks that CAMSS probes without stalling the camera NoC.
++ */
++
++#include <dt-bindings/interconnect/qcom,sm8150.h>
++
++&{/soc@0} {
++	duo_camss: camss@acb3000 {
++		compatible = "qcom,sm8150-camss";	/* patches/camss-sm8150.py: sdm845 resources + icc votes */
++
++		reg = <0 0x0acb3000 0 0x1000>,
++		      <0 0x0acba000 0 0x1000>,
++		      <0 0x0acc8000 0 0x1000>,
++		      <0 0x0ac65000 0 0x1000>,
++		      <0 0x0ac66000 0 0x1000>,
++		      <0 0x0ac67000 0 0x1000>,
++		      <0 0x0ac68000 0 0x1000>,
++		      <0 0x0acaf000 0 0x4000>,
++		      <0 0x0acb6000 0 0x4000>,
++		      <0 0x0acc4000 0 0x4000>;
++		reg-names = "csid0", "csid1", "csid2", "csiphy0", "csiphy1", "csiphy2", "csiphy3", "vfe0", "vfe1", "vfe_lite";
++
++		interrupts = <GIC_SPI 464 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 466 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 468 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 477 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 478 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 479 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 448 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 465 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 467 IRQ_TYPE_EDGE_RISING>,
++			     <GIC_SPI 469 IRQ_TYPE_EDGE_RISING>;
++		interrupt-names = "csid0", "csid1", "csid2", "csiphy0", "csiphy1", "csiphy2", "csiphy3", "vfe0", "vfe1",
++				  "vfe_lite";
++
++		power-domains = <&camcc IFE_0_GDSC>, <&camcc IFE_1_GDSC>, <&camcc TITAN_TOP_GDSC>;
++
++		/* camera NoC votes (without them the VFE wrote nothing to memory) */
++		interconnects = <&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_CAMERA_CFG 0>,
++				<&mmss_noc MASTER_CAMNOC_HF0 0 &mc_virt SLAVE_EBI_CH0 0>,
++				<&mmss_noc MASTER_CAMNOC_SF 0 &mc_virt SLAVE_EBI_CH0 0>,
++				<&mmss_noc MASTER_CAMNOC_HF1 0 &mc_virt SLAVE_EBI_CH0 0>;
++		interconnect-names = "cam_ahb", "cam_hf_0_mnoc", "cam_sf_0_mnoc", "cam_sf_icp_mnoc";
++
++		/* downstream csiphy: mipi-csi-vdd = PM8150L L3 1.2 V; the 0.88 V PHY rail like sdm845 boards (L5A here) */
++		vdda-phy-supply = <&vreg_l5a_0p875>;
++		vdda-pll-supply = <&vreg_l3c_1p2>;
++
++		clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
++			 <&camcc CAM_CC_CPAS_AHB_CLK>,
++			 <&camcc CAM_CC_CPHY_RX_CLK_SRC>,
++			 <&camcc CAM_CC_IFE_0_CSID_CLK>,
++			 <&camcc CAM_CC_IFE_0_CSID_CLK_SRC>,
++			 <&camcc CAM_CC_IFE_1_CSID_CLK>,
++			 <&camcc CAM_CC_IFE_1_CSID_CLK_SRC>,
++			 <&camcc CAM_CC_IFE_LITE_0_CSID_CLK>,
++			 <&camcc CAM_CC_IFE_LITE_0_CSID_CLK_SRC>,
++			 <&camcc CAM_CC_CSIPHY0_CLK>,
++			 <&camcc CAM_CC_CSI0PHYTIMER_CLK>,
++			 <&camcc CAM_CC_CSI0PHYTIMER_CLK_SRC>,
++			 <&camcc CAM_CC_CSIPHY1_CLK>,
++			 <&camcc CAM_CC_CSI1PHYTIMER_CLK>,
++			 <&camcc CAM_CC_CSI1PHYTIMER_CLK_SRC>,
++			 <&camcc CAM_CC_CSIPHY2_CLK>,
++			 <&camcc CAM_CC_CSI2PHYTIMER_CLK>,
++			 <&camcc CAM_CC_CSI2PHYTIMER_CLK_SRC>,
++			 <&camcc CAM_CC_CSIPHY3_CLK>,
++			 <&camcc CAM_CC_CSI3PHYTIMER_CLK>,
++			 <&camcc CAM_CC_CSI3PHYTIMER_CLK_SRC>,
++			 <&gcc GCC_CAMERA_AHB_CLK>,
++			 <&gcc GCC_CAMERA_HF_AXI_CLK>,
++			 <&gcc GCC_CAMERA_SF_AXI_CLK>,
++			 <&camcc CAM_CC_SLOW_AHB_CLK_SRC>,
++			 <&camcc CAM_CC_CORE_AHB_CLK>,
++			 <&camcc CAM_CC_IFE_0_AXI_CLK>,
++			 <&camcc CAM_CC_IFE_0_CLK>,
++			 <&camcc CAM_CC_IFE_0_CPHY_RX_CLK>,
++			 <&camcc CAM_CC_IFE_0_CLK_SRC>,
++			 <&camcc CAM_CC_IFE_1_AXI_CLK>,
++			 <&camcc CAM_CC_IFE_1_CLK>,
++			 <&camcc CAM_CC_IFE_1_CPHY_RX_CLK>,
++			 <&camcc CAM_CC_IFE_1_CLK_SRC>,
++			 <&camcc CAM_CC_IFE_LITE_0_CLK>,
++			 <&camcc CAM_CC_IFE_LITE_0_CPHY_RX_CLK>,
++			 <&camcc CAM_CC_IFE_LITE_0_CLK_SRC>;
++		clock-names = "camnoc_axi", "cpas_ahb", "cphy_rx_src",
++			      "csi0", "csi0_src", "csi1", "csi1_src", "csi2", "csi2_src",
++			      "csiphy0", "csiphy0_timer", "csiphy0_timer_src",
++			      "csiphy1", "csiphy1_timer", "csiphy1_timer_src",
++			      "csiphy2", "csiphy2_timer", "csiphy2_timer_src",
++			      "csiphy3", "csiphy3_timer", "csiphy3_timer_src",
++			      "gcc_camera_ahb", "gcc_camera_axi", "gcc_camera_sf_axi", "slow_ahb_src", "soc_ahb",
++			      "vfe0_axi", "vfe0", "vfe0_cphy_rx", "vfe0_src",
++			      "vfe1_axi", "vfe1", "vfe1_cphy_rx", "vfe1_src",
++			      "vfe_lite", "vfe_lite_cphy_rx", "vfe_lite_src";
++
++		iommus = <&apps_smmu 0x0840 0x0>, <&apps_smmu 0x0860 0x0>,
++			 <&apps_smmu 0x0a40 0x0>, <&apps_smmu 0x0a60 0x0>,
++			 <&apps_smmu 0x0c40 0x0>, <&apps_smmu 0x0c60 0x0>,
++			 <&apps_smmu 0x0e40 0x0>, <&apps_smmu 0x0e60 0x0>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-charger.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-charger.dtsi
+new file mode 100644
+index 000000000..6561c44d8
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-charger.dtsi
+@@ -0,0 +1,64 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo (1st gen) charger: PM8150B SMB5 via qcom_smbx (+ tools/linux/patches/smb5, upstream series by
++ * Casey Connolly). Interrupts from Microsoft's own DT overlay (dtbo_a, "Surface Duo DV_A", board subtype 0x10):
++ * batif@1200 bat-ov = irq 2, usb@1300 usbin-plugin = 4 / usbin-icl-change = 7, misc@1600 wdog-bark = 1.
++ * Microsoft's limits there: fcc-max 3.7 A, fv-max 4.40 V, usb-icl 3 A, software JEITA from the two bq27742 gauges
++ * (packs 2715 + 750 mAh). The battery node carries Microsoft's maxima (3.0 A = usb-icl, 4.40 V): the driver caps the writable
++ * charge current/voltage at them, and the platform's charge guard (sw-JEITA + step profile from the gauge
++ * temperatures, tools/linux/duo-charger-guard.sh) picks the value inside them; the guard also suspends the USB input
++ * outside 0..45 C (docs/research/33 "Charger"). qcom,sw-jeita-enable = the PMIC's own JEITA stays off (its thermistor
++ * input reads a bogus hot soft limit on the Duo) - Microsoft's downstream DT sets the same property.
++ */
++
++/ {
++	duo_battery: battery {
++		compatible = "simple-battery";
++		charge-full-design-microamp-hours = <3465000>;
++		voltage-min-design-microvolt = <3400000>;
++		voltage-max-design-microvolt = <4300000>;
++		/* qcom_smbx uses this as the wall-charger (DCP) input limit too -> Microsoft's usb-icl 3.0 A, not fcc-max 3.7 A */
++		constant-charge-current-max-microamp = <3000000>;
++		constant-charge-voltage-max-microvolt = <4400000>;
++		charge-term-current-microamp = <150000>;
++	};
++};
++
++&pm8150b_adc {
++	channel@7 {
++		reg = <ADC5_USB_IN_I>;
++		qcom,pre-scaling = <1 1>;
++		label = "usb_in_i_uv";
++	};
++
++	channel@8 {
++		reg = <ADC5_USB_IN_V_16>;
++		qcom,pre-scaling = <1 16>;
++		label = "usb_in_v_div_16";
++	};
++};
++
++&spmi_bus {
++	pmic@2 {
++		pm8150b_charger: charger@1000 {
++			compatible = "qcom,pm8150b-charger";
++			reg = <0x1000>;
++
++			interrupts = <0x2 0x13 0x4 IRQ_TYPE_EDGE_BOTH>,
++				     <0x2 0x12 0x2 IRQ_TYPE_EDGE_BOTH>,
++				     <0x2 0x16 0x1 IRQ_TYPE_EDGE_RISING>,
++				     <0x2 0x13 0x7 IRQ_TYPE_EDGE_RISING>;
++			interrupt-names = "usb-plugin",
++					  "bat-ov",
++					  "wdog-bark",
++					  "usbin-icl-change";
++
++			io-channels = <&pm8150b_adc ADC5_USB_IN_I>,
++				      <&pm8150b_adc ADC5_USB_IN_V_16>;
++			io-channel-names = "usbin_i", "usbin_v";
++
++			monitored-battery = <&duo_battery>;
++			qcom,sw-jeita-enable;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-display.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-display.dtsi
+new file mode 100644
+index 000000000..7ce851558
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-display.dtsi
+@@ -0,0 +1,113 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1 displays: MDSS/DPU + DSI0 (left, LG "C3") + DSI1 (right, LG "R2"), both 1350x1800
++ * command-mode DSC panels driven by tools/linux/panel/panel-microsoft-surface-duo.c.
++ *
++ * Values from the Duo's Android dtbo #31 (see docs/research/34-display.md):
++ *   C3: reset TLMM 5, TE TLMM 8, vddi = pm8150 S4 (1.8 V)
++ *   R2: reset TLMM 6, TE TLMM 9, vddi = pm8150 S4, vpnl = pm8150 L17 (3.0 V)
++ * DSI controller/PHY supplies as in mainline sm8150-hdk.dts (vdda = L3C 1.2 V, PHY vdds = L5A 0.875 V).
++ * Included from the Duo dts by tools/linux/apply-dts.sh.
++ */
++#include <dt-bindings/gpio/gpio.h>
++
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	vdda-supply = <&vreg_l3c_1p2>;
++	status = "okay";
++
++	panel_c3: panel@0 {
++		compatible = "microsoft,surface-duo-panel";
++		reg = <0>;
++		reset-gpios = <&tlmm 5 GPIO_ACTIVE_LOW>;
++		vddi-supply = <&vreg_s4a_1p8>;
++		pinctrl-0 = <&panel_c3_default>;
++		pinctrl-names = "default";
++
++		port {
++			panel_c3_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	remote-endpoint = <&panel_c3_in>;
++	data-lanes = <0 1 2 3>;
++	qcom,te-source = "mdp_vsync_p";
++};
++
++&mdss_dsi0_phy {
++	vdds-supply = <&vreg_l5a_0p875>;
++	status = "okay";
++};
++
++&mdss_dsi1 {
++	vdda-supply = <&vreg_l3c_1p2>;
++	status = "okay";
++
++	panel_r2: panel@0 {
++		compatible = "microsoft,surface-duo-panel";
++		reg = <0>;
++		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
++		vddi-supply = <&vreg_s4a_1p8>;
++		vpnl-supply = <&vreg_l17a_3p0>;
++		pinctrl-0 = <&panel_r2_default>;
++		pinctrl-names = "default";
++
++		port {
++			panel_r2_in: endpoint {
++				remote-endpoint = <&mdss_dsi1_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi1_out {
++	remote-endpoint = <&panel_r2_in>;
++	data-lanes = <0 1 2 3>;
++	qcom,te-source = "mdp_vsync_s";
++};
++
++&mdss_dsi1_phy {
++	vdds-supply = <&vreg_l5a_0p875>;
++	status = "okay";
++};
++
++&tlmm {
++	panel_c3_default: panel-c3-default-state {
++		reset-pins {
++			pins = "gpio5";
++			function = "gpio";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		te-pins {
++			pins = "gpio8";
++			function = "mdp_vsync";
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++	};
++
++	panel_r2_default: panel-r2-default-state {
++		reset-pins {
++			pins = "gpio6";
++			function = "gpio";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		te-pins {
++			pins = "gpio9";
++			function = "mdp_vsync";
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-gpu.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-gpu.dtsi
+new file mode 100644
+index 000000000..44899878a
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-gpu.dtsi
+@@ -0,0 +1,14 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo (1st gen) GPU: Adreno 640 + GMU, like sm8150-hdk/mtp. Firmware (a630_sqe.fw, a640_gmu.bin and the
++ * a640_zap.mdt zap shader) is linked at boot by init from the phone's own vendor_a partition (docs/research/33 "GPU").
++ * Tested first as a one-shot DT (duo-grub-test.sh DTB=), not in the default DT.
++ */
++
++&gmu {
++	status = "okay";
++};
++
++&gpu {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi
+new file mode 100644
+index 000000000..4b464d87d
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi
+@@ -0,0 +1,11 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Camera test override (step 7, docs/research/33 "CAMERA"): downstream gives the IMX351 cam_bob-supply = PM8150L BOB
++ * at 3.3 V with "pwm-switch" (PWM mode while the camera runs); the board's vana 2.8 V switch is fed from BOB, which
++ * mainline leaves at 3.008 V in AUTO mode. Theory: the pixel array starves (the sensor only sent embedded-data lines).
++ */
++
++&vreg_bob {
++	regulator-min-microvolt = <3296000>;
++	regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351.dtsi
+new file mode 100644
+index 000000000..91705091f
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351.dtsi
+@@ -0,0 +1,87 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: the IMX351 sensor on CCI0 master 1 linked to CAMSS csiphy1 (camera step 4, docs/research/33).
++ * Use after sm8150-microsoft-surface-duo-camera.dtsi + -camss.dtsi. The sensor driver (tools/linux/drivers/imx351)
++ * owns MCLK1 now, so the CCI goes back to its own five clocks + pins.
++ */
++#include <dt-bindings/gpio/gpio.h>
++
++&duo_cci0 {
++	clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
++		 <&camcc CAM_CC_SLOW_AHB_CLK_SRC>,
++		 <&camcc CAM_CC_CPAS_AHB_CLK>,
++		 <&camcc CAM_CC_CCI_0_CLK>,
++		 <&camcc CAM_CC_CCI_0_CLK_SRC>;
++	clock-names = "camnoc_axi", "slow_ahb_src", "cpas_ahb", "cci", "cci_src";
++	assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>, <&camcc CAM_CC_CCI_0_CLK>;
++	assigned-clock-rates = <80000000>, <37500000>;
++	pinctrl-0 = <&duo_cci0_m0 &duo_cci0_m1>;
++};
++
++&duo_cci0_i2c1 {
++	duo_imx351: camera@1a {
++		compatible = "sony,imx351";
++		reg = <0x1a>;
++		clocks = <&camcc CAM_CC_MCLK1_CLK>;
++		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
++		assigned-clock-rates = <19200000>;
++		vio-supply = <&vreg_l1c_1p8>;
++		/* CAM_POWER_GPIO1 switches the module's vana 2.8 V + vdig 1.05 V + the AF vaf 2.8 V: modelled as one
++		 * regulator so the sensor and the lens can both power the module (2026-11-05; power-gpios = old form) */
++		vana-supply = <&duo_cam_module_pwr>;
++		reset-gpios = <&tlmm 30 GPIO_ACTIVE_LOW>;	/* CAM_RESET1 */
++		orientation = <0>;	/* front: the Duo's one camera faces the user when open (Android also uses it as rear by folding) */
++		/* Android's DT (dtbo dt31 qcom,cam-sensor): sensor-position-roll 90 / yaw 180. Verified in Snapshot, phone in
++		 * portrait (2026-11-07): 270 showed the picture upside down, 90 is upright. */
++		rotation = <90>;
++		lens-focus = <&duo_cam_lens>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&duo_cam_mclk1>;
++
++		port {
++			duo_imx351_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <828000000>;
++				remote-endpoint = <&duo_csiphy1_ep>;
++			};
++		};
++	};
++};
++
++&duo_camss {
++	ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port@1 {
++			reg = <1>;
++			duo_csiphy1_ep: endpoint {
++				data-lanes = <0 1 2 3>;
++				remote-endpoint = <&duo_imx351_ep>;
++			};
++		};
++	};
++};
++
++/* Autofocus (2026-11-05, docs/research/workbench/camera.md): Dongwoon DW9800L on CCI0 master 1 at 0x0c (the CamX
++ * module names "dw9800l_actuator"); mainline dw9719 in its DW9800K mode drives it (focus_absolute 0..1023 verified
++ * against the chip's position registers). Its 2.8 V comes through the module power switch below. */
++&duo_cci0_i2c1 {
++	duo_cam_lens: lens@c {
++		compatible = "dongwoon,dw9800k";
++		reg = <0x0c>;
++		vdd-supply = <&duo_cam_module_pwr>;
++	};
++};
++
++/ {
++	duo_cam_module_pwr: cam-module-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "cam_module_pwr";
++		regulator-min-microvolt = <2800000>;
++		regulator-max-microvolt = <2800000>;
++		gpio = <&tlmm 11 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		startup-delay-us = <5000>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi
+new file mode 100644
+index 000000000..3126c30b0
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi
+@@ -0,0 +1,73 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo (SM8150): IPA v4.1 (modem data path) - DRAFT, TEST DTB ONLY.
++ * Needs tools/linux/patches/ipa-v4.1 (compatible "qcom,sm8150-ipa").
++ * Values from the phone's downstream DT (qcom,ipa@1e00000, ipa_smmu_ap/uc, smp2p "ipa"
++ * entries, pil_ipa_fw_region) mapped onto the mainline sc7180/sdm845 node layout.
++ * See docs/research/workbench/ipa-v4.1.md. Firmware: vendor_a /firmware/ipa_fws.*,
++ * linked at boot to /lib/firmware/qcom/sm8150/ (never stored in the repo).
++ */
++
++&{/smp2p-mpss} {
++	ipa_smp2p_out: ipa-ap-to-modem {
++		qcom,entry-name = "ipa";
++		#qcom,smem-state-cells = <1>;
++	};
++
++	ipa_smp2p_in: ipa-modem-to-ap {
++		qcom,entry-name = "ipa";
++		interrupt-controller;
++		#interrupt-cells = <2>;
++	};
++};
++
++&soc {
++	ipa: ipa@1e40000 {
++		compatible = "qcom,sm8150-ipa";
++
++		/* downstream ipa_smmu_ap (0x520) + ipa_smmu_uc (0x522) */
++		iommus = <&apps_smmu 0x520 0x0>,
++			 <&apps_smmu 0x522 0x0>;
++		/* ipa-base 0x1e00000 + v4.0 reg offset 0x40000; SRAM direct access at +0x7000;
++		 * layout ends at 0x280 + 0x2800 (ipa_4_1_mem_part), hence 0x3000 */
++		reg = <0 0x01e40000 0 0x7000>,
++		      <0 0x01e47000 0 0x3000>,
++		      <0 0x01e04000 0 0x2c000>;
++		reg-names = "ipa-reg",
++			    "ipa-shared",
++			    "gsi";
++
++		interrupts-extended = <&intc GIC_SPI 311 IRQ_TYPE_EDGE_RISING>,
++				      <&intc GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>,
++				      <&ipa_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
++				      <&ipa_smp2p_in 1 IRQ_TYPE_EDGE_RISING>;
++		interrupt-names = "ipa",
++				  "gsi",
++				  "ipa-clock-query",
++				  "ipa-setup-ready";
++
++		clocks = <&rpmhcc RPMH_IPA_CLK>;
++		clock-names = "core";
++
++		interconnects = <&aggre2_noc MASTER_IPA 0 &mc_virt SLAVE_EBI_CH0 0>,
++				<&aggre2_noc MASTER_IPA 0 &system_noc SLAVE_OCIMEM 0>,
++				<&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_IPA_CFG 0>;
++		interconnect-names = "memory",
++				     "imem",
++				     "config";
++
++		qcom,qmp = <&aoss_qmp>;
++
++		qcom,smem-states = <&ipa_smp2p_out 0>,
++				   <&ipa_smp2p_out 1>;
++		qcom,smem-state-names = "ipa-clock-enabled-valid",
++					"ipa-clock-enabled";
++
++		/* TZ PAS 15 authenticates the GSI firmware the AP loads */
++		qcom,gsi-loader = "self";
++		memory-region = <&ipa_fw_mem>;
++		firmware-name = "qcom/sm8150/ipa_fws.mdt";
++
++		status = "okay";
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi
+new file mode 100644
+index 000000000..d00e5011a
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi
+@@ -0,0 +1,12 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: run PM8150 L17A (vpnl of the R2 panel on DSI1 = the camera-side screen) at 3.0 V like Microsoft's
++ * downstream kernel (Droidian regulator dump 2026-11-05: pm8150_l17 enabled 3000000 uV, consumer
++ * soc:qcom,dsi-display-secondary-vpnl). The mainline Duo DT allows 2856000..3008000 and the regulator core settles on
++ * the minimum (2.856 V); that panel's FIRST init fails on most boots (docs/research/33 "Boot panel fault").
++ */
++
++&vreg_l17a_3p0 {
++	regulator-min-microvolt = <3000000>;
++	regulator-max-microvolt = <3008000>;
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-mic.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-mic.dtsi
+new file mode 100644
+index 000000000..7c17d79ed
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-mic.dtsi
+@@ -0,0 +1,46 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo microphones (2026-11-04, docs/research/33 "Microphones"): WORK (DMIC1 + DMIC2 live, DTB #55 default). The capture DAI link SLIMBUS_0_TX ->
++ * WCD9340 AIF1_CAP + the DMIC bias routing. (A first one-shot boot with the card BUILT IN hung; the card is a module since
++ * kernel #60 and loads fine with this link, by hand and from init.)
++ */
++
++&{/sound} {
++	/* Microsoft's DT (dtbo DV_A): DMIC1 is powered by MIC BIAS1, DMIC2 by MIC BIAS3 (mainline had no routing: the
++	 * DMICs stayed unpowered -> digital silence, rms 0) */
++	audio-routing = "DMIC1", "MIC BIAS1",
++			"DMIC2", "MIC BIAS3";
++
++		/* a second front end (pcm 1,1) so capture and playback can run at once (one ASM session per FE:
++		 * "Audio Client already active" when both used MultiMedia1) - the speaker->mic loopback test */
++		mm2-dai-link {
++			link-name = "MultiMedia2";
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++			};
++		};
++
++		slim-capture-dai-link {
++			/* 2026-11-04: microphones. Android handset-mic = DMIC1 -> DEC7 -> CDC_IF TX7 -> SLIM TX7 (AIF1_CAP)
++			 * -> SLIMBUS_0_TX -> MultiMedia1 (mixer_paths_tavil.xml; tools/linux/duo-mic-test.sh) */
++			link-name = "SLIM Capture";
++			cpu {
++				sound-dai = <&q6afedai SLIMBUS_0_TX>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++
++			codec {
++				sound-dai = <&wcd9340 1>;
++			};
++		};
++};
++
++/* MultiMedia2 front end (capture during playback) needs its own ASM DAI */
++&q6asmdai {
++	dai@1 {
++		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-usbc.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-usbc.dtsi
+new file mode 100644
+index 000000000..8ad4a1e2e
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-usbc.dtsi
+@@ -0,0 +1,119 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: USB-C port with DisplayPort alt mode (LOOP.md k; request 2026-11-04: test a Surface USB-C dock with a
++ * PC link + HDMI). Mainline has every piece (pm8150b type-C, QMP USB3/DP combo PHY, msm DP, FSA4480 SBU mux, dwc3 role
++ * switch); the Duo DT just never enabled them. Wiring from the Duo's own downstream overlays (dtbo_a "Surface Duo DV_C",
++ * docs/research/33): FSA4480 at i2c4 (i2c@890000) 0x43 = the DP AUX (SBU) switch, its enable gpio2 held low
++ * ("fsa_usbc_ana_en"); layout modelled on sm8150-hdk.dts (same SoC).
++ * dwc3 stays PERIPHERAL by default so the workbench's USB gadget to the PC (ssh/serial/watchdog) works as before.
++ */
++#include <dt-bindings/usb/pd.h>
++
++&tlmm {
++	duo_fsa_en_default: duo-fsa-en-default-state {
++		pins = "gpio2";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		output-low;
++	};
++};
++
++&i2c4 {
++	typec-mux@43 {
++		compatible = "fcs,fsa4480";
++		reg = <0x43>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&duo_fsa_en_default>;
++		mode-switch;
++		orientation-switch;
++
++		port {
++			duo_fsa4480_sbu_mux: endpoint {
++				remote-endpoint = <&duo_typec_sbu_out>;
++			};
++		};
++	};
++};
++
++/* the type-C block's VBUS output (when the phone powers a device); qcom-pmic-typec defers forever without it */
++&pm8150b_vbus {
++	regulator-min-microamp = <500000>;
++	regulator-max-microamp = <3000000>;
++	status = "okay";
++};
++
++&pm8150b_typec {
++	status = "okay";
++	vdd-pdphy-supply = <&vreg_l2a_3p1>;
++
++	connector {
++		compatible = "usb-c-connector";
++		/* a phone: charge from a dock/charger, but can also power a small device */
++		power-role = "dual";
++		try-power-role = "sink";
++		data-role = "dual";
++		sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_DUAL_ROLE | PDO_FIXED_USB_COMM | PDO_FIXED_DATA_SWAP)>;
++		source-pdos = <PDO_FIXED(5000, 500, PDO_FIXED_DUAL_ROLE | PDO_FIXED_USB_COMM | PDO_FIXED_DATA_SWAP)>;
++		op-sink-microwatt = <10000000>;
++
++		altmodes {
++			displayport {
++				svid = /bits/ 16 <0xff01>;
++				vdo = <0x00001c46>;
++			};
++		};
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++				duo_typec_hs_in: endpoint {
++					remote-endpoint = <&usb_1_dwc3_hs>;
++				};
++			};
++
++			port@1 {
++				reg = <1>;
++				duo_typec_mux_in: endpoint {
++					remote-endpoint = <&usb_1_qmpphy_out>;
++				};
++			};
++
++			port@2 {
++				reg = <2>;
++				duo_typec_sbu_out: endpoint {
++					remote-endpoint = <&duo_fsa4480_sbu_mux>;
++				};
++			};
++		};
++	};
++};
++
++&usb_1_qmpphy {
++	orientation-switch;
++};
++
++&usb_1_qmpphy_out {
++	remote-endpoint = <&duo_typec_mux_in>;
++};
++
++&usb_1_dwc3 {
++	dr_mode = "otg";
++	usb-role-switch;
++	role-switch-default-mode = "peripheral";
++};
++
++&usb_1_dwc3_hs {
++	remote-endpoint = <&duo_typec_hs_in>;
++};
++
++&mdss_dp {
++	status = "okay";
++};
++
++&mdss_dp_out {
++	data-lanes = <0 1>;
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi
+new file mode 100644
+index 000000000..f025778e4
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi
+@@ -0,0 +1,74 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: Venus video codec (IRIS1) for the venus driver patched by patches/venus-sm8150-iris1.py
++ * (docs/research/33 "VENUS PORT SPEC"). Placement, clocks, resets and the IOMMU stream come from the phone's own
++ * downstream DT (qcom,vidc@aa00000, "qcom,sm8150-vidc"); the node layout follows mainline's sm8250 venus.
++ * Firmware: the phone's own modem_a image/venus.mdt, linked at boot to /lib/firmware/qcom/sm8150/microsoft/ by init.
++ * Test only via a one-shot DTB (build-test-dtb.sh) with venus as a module loaded by hand.
++ */
++#include <dt-bindings/clock/qcom,gcc-sm8150.h>
++#include <dt-bindings/clock/qcom,videocc-sm8150.h>
++#include <dt-bindings/interconnect/qcom,sm8150.h>
++#include <dt-bindings/power/qcom-rpmpd.h>
++
++&{/soc@0} {
++	venus: video-codec@aa00000 {
++		compatible = "qcom,sm8150-venus";
++		reg = <0 0x0aa00000 0 0x100000>;
++		interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
++
++		power-domains = <&videocc VENUS_GDSC>,
++				<&videocc VCODEC0_GDSC>,
++				<&rpmhpd SM8150_MX>;
++		power-domain-names = "venus", "vcodec0", "mx";
++		operating-points-v2 = <&duo_venus_opp_table>;
++
++		clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
++			 <&videocc VIDEO_CC_MVSC_CORE_CLK>,
++			 <&videocc VIDEO_CC_MVS0_CORE_CLK>,
++			 <&gcc GCC_VIDEO_AXIC_CLK>,
++			 <&gcc GCC_VIDEO_AXI1_CLK>;
++		clock-names = "iface", "core", "vcodec0_core", "axic", "axi1";
++
++		interconnects = <&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_VENUS_CFG 0>,
++				<&mmss_noc MASTER_VIDEO_P0 0 &mc_virt SLAVE_EBI_CH0 0>;
++		interconnect-names = "cpu-cfg", "video-mem";
++
++		/* ONE stream only: downstream's mask 0x60 (0x2300/20/40/60) hard-hung the boot as soon as the SMMU registered
++		 * (2026-11-04) - an SMR overlapping streams the hypervisor/TZ owns; 0x2300 alone boots (iommu group 10) */
++		iommus = <&apps_smmu 0x2300 0x0>;
++		memory-region = <&venus_mem>;
++
++		resets = <&gcc GCC_VIDEO_AXIC_CLK_BCR>,
++			 <&videocc VIDEO_CC_MVSC_CORE_CLK_BCR>;
++		reset-names = "bus", "core";
++
++		firmware-name = "qcom/sm8150/microsoft/venus.mdt";
++
++		duo_venus_opp_table: opp-table {
++			compatible = "operating-points-v2";
++
++			opp-240000000 {
++				opp-hz = /bits/ 64 <240000000>;
++				required-opps = <&rpmhpd_opp_low_svs>;
++			};
++			opp-338000000 {
++				opp-hz = /bits/ 64 <338000000>;
++				required-opps = <&rpmhpd_opp_svs>;
++			};
++			opp-365000000 {
++				opp-hz = /bits/ 64 <365000000>;
++				required-opps = <&rpmhpd_opp_svs_l1>;
++			};
++			opp-444000000 {
++				opp-hz = /bits/ 64 <444000000>;
++				required-opps = <&rpmhpd_opp_nom>;
++			};
++			opp-533000000 {
++				opp-hz = /bits/ 64 <533000000>;
++				required-opps = <&rpmhpd_opp_turbo>;
++			};
++		};
++
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus.dtsi
+new file mode 100644
+index 000000000..2686ca6c3
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus.dtsi
+@@ -0,0 +1,86 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: Venus video codec (IRIS1) for the venus driver patched by patches/venus-sm8150-iris1.py
++ * (docs/research/33 "VENUS PORT SPEC"). Placement, clocks, resets and the IOMMU stream come from the phone's own
++ * downstream DT (qcom,vidc@aa00000, "qcom,sm8150-vidc"); the node layout follows mainline's sm8250 venus.
++ * Firmware: the phone's own modem_a image/venus.mdt, linked at boot to /lib/firmware/qcom/sm8150/microsoft/ by init.
++ * Test only via a one-shot DTB (build-test-dtb.sh) with venus as a module loaded by hand.
++ */
++#include <dt-bindings/clock/qcom,gcc-sm8150.h>
++#include <dt-bindings/clock/qcom,videocc-sm8150.h>
++#include <dt-bindings/interconnect/qcom,sm8150.h>
++#include <dt-bindings/power/qcom-rpmpd.h>
++
++&{/soc@0} {
++	venus: video-codec@aa00000 {
++		compatible = "qcom,sm8150-venus";
++		reg = <0 0x0aa00000 0 0x100000>;	/* 1 MB: downstream maps 2 MB, but 0xab00000 is the videocc device on mainline (-EBUSY) */
++		interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
++
++		power-domains = <&videocc VENUS_GDSC>,
++				<&videocc VCODEC0_GDSC>,
++				<&videocc VCODEC1_GDSC>,
++				<&rpmhpd SM8150_MX>;
++		/* vcodec1 = downstream "cvp" supply; powered with the core (patches/venus-sm8150-iris1.py) */
++		power-domain-names = "venus", "vcodec0", "vcodec1", "mx";
++		operating-points-v2 = <&duo_venus_opp_table>;
++
++		clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
++			 <&videocc VIDEO_CC_MVSC_CORE_CLK>,
++			 <&videocc VIDEO_CC_MVS0_CORE_CLK>,
++			 <&gcc GCC_VIDEO_AXIC_CLK>,
++			 <&gcc GCC_VIDEO_AXI1_CLK>,
++			 <&videocc VIDEO_CC_MVS1_CORE_CLK>;
++		/* vcodec1_core = downstream cvp_clk, run together with vcodec0_core (patches/venus-iris1-mvs1.py) */
++		clock-names = "iface", "core", "vcodec0_core", "axic", "axi1", "vcodec1_core";
++
++		interconnects = <&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_VENUS_CFG 0>,
++				<&mmss_noc MASTER_VIDEO_P0 0 &mc_virt SLAVE_EBI_CH0 0>;
++		interconnect-names = "cpu-cfg", "video-mem";
++
++		/* All four non-secure streams of downstream's venus_ns bank (0x2300 mask 0x60), as four EXACT SMRs: the one
++		 * masked SMR hard-hung the boot when the SMMU registered, and 0x2300 alone let the firmware's DMA on
++		 * 0x2320/40/60 stall the MMSS NoC once GCC_VIDEO_AXIC was on (rounds 2-8). VENUS round 9 (2026-11-04): with
++		 * these four the core boots, H.264 decode is bit-exact. */
++		iommus = <&apps_smmu 0x2300 0x0>,
++			 <&apps_smmu 0x2320 0x0>,
++			 <&apps_smmu 0x2340 0x0>,
++			 <&apps_smmu 0x2360 0x0>;
++		memory-region = <&venus_mem>;
++
++		/* downstream (Droidian msm_vidc debug log): video_axi_reset, video_core_reset, video_axi0_reset, video_axi1_reset */
++		resets = <&gcc GCC_VIDEO_AXIC_CLK_BCR>,
++			 <&videocc VIDEO_CC_MVSC_CORE_CLK_BCR>,
++			 <&gcc GCC_VIDEO_AXI0_CLK_BCR>,
++			 <&gcc GCC_VIDEO_AXI1_CLK_BCR>;
++		reset-names = "axic", "core", "axi0", "axi1";
++
++		firmware-name = "qcom/sm8150/microsoft/venus.mdt";
++
++		duo_venus_opp_table: opp-table {
++			compatible = "operating-points-v2";
++
++			opp-240000000 {
++				opp-hz = /bits/ 64 <240000000>;
++				required-opps = <&rpmhpd_opp_low_svs>;
++			};
++			opp-338000000 {
++				opp-hz = /bits/ 64 <338000000>;
++				required-opps = <&rpmhpd_opp_svs>;
++			};
++			opp-365000000 {
++				opp-hz = /bits/ 64 <365000000>;
++				required-opps = <&rpmhpd_opp_svs_l1>;
++			};
++			opp-444000000 {
++				opp-hz = /bits/ 64 <444000000>;
++				required-opps = <&rpmhpd_opp_nom>;
++			};
++			opp-533000000 {
++				opp-hz = /bits/ 64 <533000000>;
++				required-opps = <&rpmhpd_opp_turbo>;
++			};
++		};
++
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
+new file mode 100644
+index 000000000..98aad4269
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
+@@ -0,0 +1,354 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1 board fixes for the memory-boot workbench (docs/research/33-linux-workbench.md).
++ *
++ * UFS (Samsung KLUDG4UHDB): at mainline's default HS-Gear 3 the link logs repeated PHY-adapter errors
++ * (pa_err 0x80000001 from ~1 s after boot, saved_uic_err 0x44) and the error handler stalls I/O under load.
++ * Cap the high-speed gear; raise it again once a stress test passes at the higher gear.
++ */
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/clock/qcom,rpmh.h>
++
++&ufs_mem_hc {
++	/* HS-G3 rate B like Android (2026-11-04): ~820 MB/s reads, 2 GB fsync write, 0 UFS errors. The old G1 rate-A cap
++	 * (2026-11-02 link errors) was really a rate-A problem: the PHY wants rate B. docs/research/33 "UFS". */
++	limit-hs-gear = <3>;
++	limit-gear-rate = "rate-b";
++};
++
++/*
++ * Touch/pen digitizer: Microsoft HID-over-SPI ("ts_d5") on QUP SE7 SPI (0x89c000), copied from the Duo's Android
++ * dtbo #31 (fragment@44/45, d5_hid@0). The chip speaks the v0.9 protocol (input header version 2), so it needs
++ * Microsoft's own Duo 1 driver (tools/linux/drivers/spi-hid-duo, CONFIG_SPI_HID_DUO), not the upstream 2026
++ * spi-hid series (v1.0 only). That driver toggles reset and power through three pinctrl states:
++ * active = gpio1 up + reset (gpio0) released + IRQ (gpio3) pulled down; sleep = gpio1 down + reset held + IRQ
++ * unbiased; reset = gpio1 up + reset held + IRQ pulled down. The reset states also DRIVE gpio0 (output-low/high):
++ * the UEFI leaves it as an output driven high, so bias alone never reset the chip and it stayed silent.
++ * gpio1 (the chip's power-enable/wake line) is the same: it must be DRIVEN low then high, or after a warm reset
++ * (PS_HOLD, watchdog) the chip never sees a power-on edge and stays silent (2026-11-03).
++ */
++&spi7 {
++	status = "okay";
++
++	touch@0 {
++		compatible = "hid-over-spi";
++		reg = <0>;
++		spi-max-frequency = <25000000>;
++		interrupts-extended = <&tlmm 3 IRQ_TYPE_LEVEL_HIGH>;
++		vdd-supply = <&vreg_l9a_1p2>;
++		pinctrl-names = "active", "sleep", "reset";
++		pinctrl-0 = <&ts_d5_active>, <&ts_d5_reset_deassert>, <&ts_d5_int_bias>;
++		pinctrl-1 = <&ts_d5_sleep>, <&ts_d5_reset_assert>, <&ts_d5_int_unbias>;
++		pinctrl-2 = <&ts_d5_active>, <&ts_d5_reset_assert>, <&ts_d5_int_bias>;
++		hid-descr-addr = <1>;
++		sleep-timeout-ms = <30000>;
++	};
++};
++
++&tlmm {
++	ts_d5_int_bias: ts-d5-int-bias-state {
++		pins = "gpio3";
++		function = "gpio";
++		bias-pull-down;
++		input-enable;
++	};
++
++	ts_d5_int_unbias: ts-d5-int-unbias-state {
++		pins = "gpio3";
++		function = "gpio";
++		bias-disable;
++		input-enable;
++	};
++
++	ts_d5_active: ts-d5-active-state {
++		pins = "gpio1";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++		output-high;
++	};
++
++	ts_d5_sleep: ts-d5-sleep-state {
++		pins = "gpio1";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++		output-low;
++	};
++
++	ts_d5_reset_deassert: ts-d5-reset-deassert-state {
++		pins = "gpio0";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++		output-high;
++	};
++
++	ts_d5_reset_assert: ts-d5-reset-assert-state {
++		pins = "gpio0";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++		output-low;
++	};
++};
++
++/*
++ * Modem (MPSS) for Wi-Fi: the phone's modem_a partition holds split firmware (modem.mdt + modem.bNN), not the
++ * single modem.mbn upstream names; the PAS loader handles .mdt + segments. The initramfs links the partition's
++ * image/ files into /lib/firmware/qcom/sm8150/microsoft/ and starts this remoteproc once they are there.
++ */
++&remoteproc_mpss {
++	firmware-name = "qcom/sm8150/microsoft/modem.mdt";
++};
++
++/*
++ * Wi-Fi experiment (2026-11-03): WLAN firmware crashes with "ccpm_hw_clk.c: CCPM: PLL lock failed". Supplies match
++ * Android (L1A 0.752, L7A 1.8, L2C 1.304), but mainline lets ch0 (L11C) sit at its 3.0 V minimum while Android asks
++ * 3.104-3.312 V. Hold ch0 at 3.3 V.
++ */
++&vreg_l11c_3p3 {
++	regulator-min-microvolt = <3304000>;
++};
++
++/*
++ * Stability experiment (2026-11-03): several hung boots show "da7280 0-004a: Please reload PS_SEQ_ID & mem data",
++ * the da7280 IRQ thread stuck in D state, and an RCU stall on one CPU. Haptics off until that path is understood.
++ */
++&{/soc@0/geniqup@8c0000/i2c@884000/da7280@4a} {
++	/*
++	 * 2026-11-04 retry: enabled, but the driver is a MODULE since kernel #64 (insmod da7280.ko by hand); a kernel with
++	 * it BUILT IN must not boot this DTB (built in it hard-hung the boot twice). Differences to upstream, from
++	 * Microsoft's DT: edge-falling IRQ (a stuck-low SEQ_FAULT line + the threaded ONESHOT handler matched the earlier
++	 * "reload PS_SEQ_ID & mem data" + RCU stall) and the LRA's 190 Hz resonance (upstream 180).
++	 */
++	status = "okay";
++	interrupts-extended = <&tlmm 42 IRQ_TYPE_EDGE_FALLING>;
++	dlg,resonant-freq-hz = <190>;
++};
++
++/*
++ * Wi-Fi: mainline ath10k_snoc only enables its supplies late (after QMI), but the modem's WLAN firmware brings up the
++ * WCN3998 radio as soon as MPSS boots -> "CCPM: PLL lock failed" with the rails off (L11C use count 0 at 3.3 V).
++ * Android's icnss powers them at probe. Keep the four WLAN rails on from boot.
++ */
++&vreg_l1a_0p75 {
++	regulator-always-on;
++};
++
++&vreg_l7a_1p8 {
++	regulator-always-on;
++};
++
++&vreg_l2c_1p3 {
++	regulator-always-on;
++};
++
++&vreg_l11c_3p3 {
++	regulator-always-on;
++};
++
++/*
++ * rmtfs shared memory where the Duo's modem firmware expects it. Downstream allocates it "dynamically" but always at
++ * the same address; Droidian (downstream 4.14) shows uio "rmtfs" at 0xfa601000, size 0x200000 (2026-11-03).
++ * Mainline's fixed 0x89b00000 makes the modem hit memory it is not allowed to (XPU) -> WLAN start crashes.
++ * Same fix as sm8150-mainline's OnePlus 7 (0xf2901000) and Xiaomi nabu (0xfe101000) DTs.
++ */
++/delete-node/ &rmtfs_mem;
++
++/ {
++	reserved-memory {
++		rmtfs_mem: memory@fa601000 {
++			compatible = "qcom,rmtfs-mem";
++			reg = <0x0 0xfa601000 0x0 0x200000>;
++			no-map;
++
++			qcom,client-id = <1>;
++			qcom,vmid = <15>;
++		};
++	};
++};
++
++/*
++ * WCN3998 (Wi-Fi + Bluetooth) via the power-sequencing driver (patches/wcn399x-pwrseq: v2 01/05/09 + v3 1-3, from
++ * the SM8150-HDK work). Supplies as Android/Windows use them; the Duo has no WCN enable or sw_ctrl GPIO (Android's
++ * bt_en/cnss pins belong to the unused QCA6390 node) and no ch1 rail. Bluetooth is on QUP SE13 (0xc8c000, Windows
++ * `\_SB.UR18`, HID QCOM0571).
++ */
++/ {
++	wcn3998-pmu {
++		compatible = "qcom,wcn3998-pmu";
++
++		vddio-supply = <&vreg_s4a_1p8>;
++		vddxo-supply = <&vreg_l7a_1p8>;
++		vddrf-supply = <&vreg_l2c_1p3>;
++		vddch0-supply = <&vreg_l11c_3p3>;
++
++		regulators {
++			vreg_pmu_io: ldo0 {
++				regulator-name = "vreg_pmu_io";
++			};
++
++			vreg_pmu_xo: ldo1 {
++				regulator-name = "vreg_pmu_xo";
++			};
++
++			vreg_pmu_rf: ldo2 {
++				regulator-name = "vreg_pmu_rf";
++			};
++
++			vreg_pmu_ch0: ldo3 {
++				regulator-name = "vreg_pmu_ch0";
++			};
++		};
++	};
++};
++
++&wifi {
++	/* Wi-Fi works with upstream's node as-is (2026-11-04): the WLAN fw crash was board data (init drops
++	 * linux-firmware's generic board-2.bin so the phone's own bdwlan.bin is used). Re-tested then: the host-cap skip
++	 * quirk and deleting the RF_CLK2/qdss clocks are NOT needed (DTB #46). Only the supplies below are added. */
++	vdd-1.8-xo-supply = <&vreg_pmu_xo>;
++	vdd-1.3-rfa-supply = <&vreg_pmu_rf>;
++	vdd-3.3-ch0-supply = <&vreg_pmu_ch0>;
++};
++
++&qupv3_id_2 {
++	status = "okay";
++};
++
++&uart13 {
++	/delete-property/ interrupts;
++	interrupts-extended = <&intc GIC_SPI 585 IRQ_TYPE_LEVEL_HIGH>,
++			      <&tlmm 46 IRQ_TYPE_EDGE_FALLING>;
++	pinctrl-0 = <&qup_uart13_default>;
++	pinctrl-1 = <&qup_uart13_sleep>;
++	pinctrl-names = "default", "sleep";
++	status = "okay";
++
++	bluetooth {
++		compatible = "qcom,wcn3998-bt";
++		/* fixed locally-administered address 02:D0:05:00:00:01 (little-endian); the Duo bootloader fills in none, and
++		 * without one the controller stays "unconfigured" (2026-11-03) */
++		local-bd-address = [ 01 00 00 05 d0 02 ];
++
++		vddio-supply = <&vreg_pmu_io>;
++		vddxo-supply = <&vreg_pmu_xo>;
++		vddrf-supply = <&vreg_pmu_rf>;
++		vddch0-supply = <&vreg_pmu_ch0>;
++
++		max-speed = <3200000>;
++	};
++};
++
++/* Sensors DSP: split firmware from the phone's modem_a partition (image/slpi.mdt + .bNN), linked by the initramfs. */
++&remoteproc_slpi {
++	firmware-name = "qcom/sm8150/microsoft/slpi.mdt";
++};
++
++/*
++ * FastRPC remote heap for the sensors PD, as sdm845.dtsi has it (sensors work there with hexagonrpcd). The
++ * patches/fastrpc fix sends SENSORS_PD message buffers to this pool; without it (sm8150.dtsi has none: "no reserved
++ * DMA memory for FASTRPC") the SLPI got memory outside its address space and the first INIT_ATTACH_SNS froze the whole
++ * SoC — a bus stall the watchdog could not reset (2026-11-03, live kmsg capture).
++ */
++/ {
++	reserved-memory {
++		fastrpc_mem: fastrpc {
++			compatible = "shared-dma-pool";
++			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++			alignment = <0x0 0x400000>;
++			size = <0x0 0x1000000>;
++			reusable;
++		};
++
++		/* pstore/ramoops (2026-11-04): keeps the kernel log + console of a HUNG boot in RAM so the next boot can
++		 * read it from /sys/fs/pstore (hard hangs left no trace so far). 1 MiB inside the UEFI's System RAM block
++		 * 0xa0000000-0xbcbfffff; survival across reset is verified with a marker before relying on it. */
++		ramoops@b0000000 {
++			compatible = "ramoops";
++			reg = <0x0 0xb0000000 0x0 0x100000>;
++			no-map;
++			record-size = <0x20000>;
++			console-size = <0x40000>;
++			pmsg-size = <0x10000>;
++			ecc-size = <16>;
++		};
++	};
++};
++
++&{/soc@0/remoteproc@2400000/glink-edge/fastrpc} {
++	qcom,vmids = <QCOM_SCM_VMID_HLOS QCOM_SCM_VMID_MSS_MSA
++		      QCOM_SCM_VMID_SSC_Q6 QCOM_SCM_VMID_ADSP_Q6>;
++	memory-region = <&fastrpc_mem>;
++};
++
++/* Compute DSP: split firmware from modem_a (image/cdsp.mdt + .bNN), linked by the initramfs; start with duo.cdsp=1. */
++&remoteproc_cdsp {
++	firmware-name = "qcom/sm8150/microsoft/cdsp.mdt";
++};
++
++/* BT UART pins (QUP SE13: gpio43 CTS, 44 RTS, 45 TX, 46 RX) — uart13 has no pinctrl in sm8150.dtsi; without these the
++ * pins are never muxed and every BT command times out (2026-11-03). States copied from the SM8150-HDK WCN399x patch. */
++&tlmm {
++	qup_uart13_default: qup-uart13-default-state {
++		cts-pins {
++			pins = "gpio43";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-bus-hold;
++		};
++
++		rts-pins {
++			pins = "gpio44";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		tx-pins {
++			pins = "gpio45";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		rx-pins {
++			pins = "gpio46";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++	};
++
++	qup_uart13_sleep: qup-uart13-sleep-state {
++		cts-pins {
++			pins = "gpio43";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-bus-hold;
++		};
++
++		rts-pins {
++			pins = "gpio44";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++
++		tx-pins {
++			pins = "gpio45";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++
++		rx-pins {
++			pins = "gpio46";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+index 835ef929f..9ecc7caba 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+@@ -540,3 +540,15 @@ &wifi {
+ 	vdd-1.3-rfa-supply = <&vdda_wcss_adcdac_1>;
+ 	vdd-3.3-ch0-supply = <&vreg_l11c_3p3>;
+ };
++
++#include "sm8150-microsoft-surface-duo-audio.dtsi"
++
++#include "sm8150-microsoft-surface-duo-display.dtsi"
++
++#include "sm8150-microsoft-surface-duo-workbench.dtsi"
++
++#include "sm8150-microsoft-surface-duo-charger.dtsi"
++
++#include "sm8150-microsoft-surface-duo-gpu.dtsi"
++
++#include "sm8150-microsoft-surface-duo-mic.dtsi"

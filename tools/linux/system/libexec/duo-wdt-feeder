@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo watchdog feeder (run by /etc/init.d/duo-watchdog on postmarketOS; same checks as the RAM workbench /init).
+exec 3> /dev/watchdog || { echo "cannot open /dev/watchdog"; exit 1; }
+echo "duo-watchdog: feeding $(cat /sys/class/watchdog/watchdog0/timeout 2>/dev/null)s watchdog" > /dev/kmsg
+RX=/sys/class/net/usb0/statistics/rx_packets; last=-1; still=0; seen=0; sshok=0; sshbad=0
+stop_petting() { echo "duo-watchdog: $1 - letting the watchdog reset the phone" > /dev/kmsg; sleep 3600; }
+while :; do
+	[ -b /dev/sda ] && dd if=/dev/sda of=/dev/null bs=4096 count=1 iflag=direct 2>/dev/null
+	# USB stall = only while the cable is still ATTACHED to a host (UDC "configured"): unplugging from the PC or
+	# plugging in a USB-C dock (the phone becomes the host) is normal use, not a dead link (2026-11-07: the old check
+	# rebooted the phone 60 s after every unplug). After a detach, wait for traffic again before arming the check.
+	if [ -r $RX ] && [ "$(cat /sys/class/udc/*/state 2>/dev/null | head -1)" = configured ]; then
+		now=$(cat $RX)
+		if [ "$now" != "$last" ]; then [ "$last" != -1 ] && seen=1; still=0; last=$now; else still=$((still + 5)); fi
+		[ $seen = 1 ] && [ $still -ge 60 ] && stop_petting "no USB traffic for ${still}s"
+	else
+		seen=0; still=0; last=-1
+	fi
+	if timeout 5 nc 127.0.0.1 22 < /dev/null 2>/dev/null | head -c 4 | grep -q 'SSH-'; then sshok=1; sshbad=0
+	elif [ $sshok = 1 ]; then sshbad=$((sshbad + 5)); [ $sshbad -ge 60 ] && stop_petting "sshd silent for ${sshbad}s"; fi
+	echo . >&3
+	sleep 5
+done

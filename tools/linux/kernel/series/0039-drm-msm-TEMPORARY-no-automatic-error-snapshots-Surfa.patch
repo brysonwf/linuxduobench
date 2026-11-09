@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:45 -0500
+Subject: [PATCH] drm/msm: TEMPORARY - no automatic error snapshots (Surface
+ Duo workbench)
+
+Error snapshots aborted on an unclocked DP block after an HDMI unplug. The DP snapshot fix above should make this
+unnecessary; this commit stays until a dock unplug test proves it (then it is dropped).
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/disp/msm_disp_snapshot.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/disp/msm_disp_snapshot.c b/drivers/gpu/drm/msm/disp/msm_disp_snapshot.c
+index 2be00b11e..4c088ab6c 100644
+--- a/drivers/gpu/drm/msm/disp/msm_disp_snapshot.c
++++ b/drivers/gpu/drm/msm/disp/msm_disp_snapshot.c
+@@ -5,6 +5,7 @@
+ 
+ #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
+ 
++#include <linux/moduleparam.h>
+ #include "msm_disp_snapshot.h"
+ 
+ static ssize_t __maybe_unused disp_devcoredump_read(char *buffer, loff_t offset,
+@@ -78,6 +79,10 @@ static void _msm_disp_snapshot_work(struct kthread_work *work)
+ 			disp_devcoredump_read, msm_disp_state_free);
+ }
+ 
++/* automatic error snapshots off by default (they abort on an unclocked DP block) */
++static bool duo_snapshot;
++module_param(duo_snapshot, bool, 0644);
++
+ void msm_disp_snapshot_state(struct drm_device *drm_dev)
+ {
+ 	struct msm_drm_private *priv;
+@@ -88,6 +93,9 @@ void msm_disp_snapshot_state(struct drm_device *drm_dev)
+ 		return;
+ 	}
+ 
++	if (!duo_snapshot)
++		return;
++
+ 	priv = drm_dev->dev_private;
+ 	kms = priv->kms;
+ 

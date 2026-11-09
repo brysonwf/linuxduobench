@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo auto-brightness for both panels, Android's curve (off: touch /etc/duo/autobrightness-off)
+[Unit]
+Description=Surface Duo auto-brightness
+After=dbus.service iio-sensor-proxy.service duo-sensors.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/libexec/duo/duo-autobrightness.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

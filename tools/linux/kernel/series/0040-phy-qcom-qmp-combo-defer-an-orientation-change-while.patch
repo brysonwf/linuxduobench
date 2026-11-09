@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:45 -0500
+Subject: [PATCH] phy: qcom: qmp-combo: defer an orientation change while DP is
+ powered
+
+A Type-C orientation change resets the combo PHY, which stops the DP PLL under a running DP stream and hangs the
+display pipe (seen on an HDMI dock unplug). Defer the reset until DP powers off.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 27 +++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 9e2a6c5d0..9ef365a0c 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -1878,6 +1878,7 @@ struct qmp_combo {
+ 	struct phy_configure_opts_dp dp_opts;
+ 	unsigned int dp_init_count;
+ 	bool dp_powered_on;
++	bool orientation_pending;
+ 
+ 	struct clk_fixed_rate pipe_clk_fixed;
+ 	struct clk_hw dp_link_hw;
+@@ -3188,6 +3189,9 @@ static int qmp_combo_dp_power_on(struct phy *phy)
+ 	return 0;
+ }
+ 
++static int qmp_combo_usb_power_on(struct phy *phy);
++static int qmp_combo_usb_power_off(struct phy *phy);
++
+ static int qmp_combo_dp_power_off(struct phy *phy)
+ {
+ 	struct qmp_combo *qmp = phy_get_drvdata(phy);
+@@ -3199,6 +3203,21 @@ static int qmp_combo_dp_power_off(struct phy *phy)
+ 
+ 	qmp->dp_powered_on = false;
+ 
++	if (qmp->orientation_pending) {
++		qmp->orientation_pending = false;
++		if (qmp->init_count) {
++			dev_info(qmp->dev, "dp_power_off: applying deferred orientation %d\n", qmp->orientation);
++			if (qmp->usb_init_count)
++				qmp_combo_usb_power_off(qmp->usb_phy);
++			qmp_combo_com_exit(qmp, true);
++			qmp_combo_com_init(qmp, true);
++			if (qmp->usb_init_count)
++				qmp_combo_usb_power_on(qmp->usb_phy);
++			if (qmp->dp_init_count)
++				qmp->cfg->dp_aux_init(qmp);
++		}
++	}
++
+ 	mutex_unlock(&qmp->phy_mutex);
+ 
+ 	return 0;
+@@ -3772,6 +3791,14 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+ 	mutex_lock(&qmp->phy_mutex);
+ 	qmp->orientation = orientation;
+ 
++	/* a PHY reset now would stop the DP PLL under a running DP pipe */
++	if (qmp->dp_powered_on) {
++		dev_info(qmp->dev, "typec_switch_set: DP in use, orientation change deferred\n");
++		qmp->orientation_pending = true;
++		mutex_unlock(&qmp->phy_mutex);
++		return 0;
++	}
++
+ 	if (qmp->init_count) {
+ 		if (qmp->usb_init_count)
+ 			qmp_combo_usb_power_off(qmp->usb_phy);

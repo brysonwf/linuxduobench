@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo: put the modem into LOW-POWER before ModemManager may enable it (systemd: ExecStartPre of
+# ModemManager.service, so it also runs when D-Bus activates ModemManager - Plasma's shell asks for it as soon as the
+# session starts). Online straight from the modem's boot state trips the RF "QLink" assertion and crashes the modem -
+# and with it Wi-Fi, whose firmware runs on the modem DSP (2026-11-08, first boot with a SIM inserted: ModemManager
+# was D-Bus-activated at 27 s, enabled the radio at 49 s, modem crash at 50 s). From low-power, online works
+# (docs/research/workbench/modem.md, 2026-11-05). Never blocks ModemManager for long: gives up after ~90 s.
+log() { echo "duo-modem-lowpower: $*"; echo "duo-modem-lowpower: $*" > /dev/kmsg 2>/dev/null; }
+command -v qmicli > /dev/null || { log "no qmicli"; exit 0; }
+M=""; for r in /sys/class/remoteproc/remoteproc*; do [ "$(cat $r/name 2>/dev/null)" = modem ] && M=$r; done
+[ -n "$M" ] || { log "no modem remoteproc"; exit 0; }
+for i in $(seq 1 60); do [ "$(cat $M/state)" = running ] && break; sleep 1; done
+[ "$(cat $M/state)" = running ] || { log "modem DSP not running ($(cat $M/state))"; exit 0; }
+for i in $(seq 1 15); do
+	m=$(timeout 8 qmicli -d qrtr://0 --dms-get-operating-mode 2>/dev/null | sed -n "s/.*Mode: '\(.*\)'.*/\1/p")
+	case "$m" in
+	low-power|online) log "operating mode already $m"; exit 0;;
+	"") ;;   # QMI not answering yet
+	*) timeout 8 qmicli -d qrtr://0 --dms-set-operating-mode=low-power > /dev/null 2>&1 && { log "low-power set (was $m)"; exit 0; };;
+	esac
+	sleep 2
+done
+log "could not set low-power - ModemManager starts anyway"
+exit 0

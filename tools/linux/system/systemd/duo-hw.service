@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo hardware glue: modules, GPU firmware from vendor_a, speaker DSP tuning, touch (iptsd), second panel
+[Unit]
+Description=Surface Duo hardware glue
+After=systemd-udevd.service systemd-udev-trigger.service local-fs.target
+# hfd-service (Plasma Mobile's haptics) picks its vibrator ONCE at start: it must see the DA7280 that duo-hw loads
+# (it started at 10 s, the motor appeared at 21 s -> "Using dummy vibrator"). The 2026-11-08 freezes came from runtime
+# rmmod/insmod of da7280 (an oops), not from hfd; with kernel 0089 (FF_RUMBLE) hfd drives the motor without errors.
+Before=display-manager.service sddm.service hfd-service.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-hw start
+ExecStop=/usr/libexec/duo/duo-hw stop
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

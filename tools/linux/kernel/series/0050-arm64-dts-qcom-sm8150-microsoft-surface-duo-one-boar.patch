@@ -1,0 +1,292 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 11:06:36 -0500
+Subject: [PATCH] arm64: dts: qcom: sm8150-microsoft-surface-duo: one board DT
+ (no test layers, no overlay)
+
+The board DTS includes exactly the twelve Duo dtsi files the default DTB was made of (it used to be layered: board DTS + appended dtsi + build-test-dtb extras + an fdtoverlay for the flash LED + fdtput patches). The flash LED is a normal dtsi now; unused experiments (camss-noiommu, imx351-bob, ipa, l17a-3v0, venus-axicrst) are removed. make dtbs reproduces the running default DTB (tools/linux/dts/dtb-compare.py: identical apart from phandle numbering).
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ ...0-microsoft-surface-duo-camss-noiommu.dtsi | 11 ---
+ .../sm8150-microsoft-surface-duo-flash.dtsi   | 21 ++++++
+ ...8150-microsoft-surface-duo-imx351-bob.dtsi | 11 ---
+ .../sm8150-microsoft-surface-duo-ipa.dtsi     | 73 ------------------
+ ...sm8150-microsoft-surface-duo-l17a-3v0.dtsi | 12 ---
+ ...0-microsoft-surface-duo-venus-axicrst.dtsi | 74 -------------------
+ .../dts/qcom/sm8150-microsoft-surface-duo.dts | 12 +--
+ 7 files changed, 28 insertions(+), 186 deletions(-)
+ delete mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-flash.dtsi
+ delete mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi
+ delete mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi
+ delete mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi
+ delete mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi
+deleted file mode 100644
+index 5ad504db4..000000000
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-camss-noiommu.dtsi
++++ /dev/null
+@@ -1,11 +0,0 @@
+-// SPDX-License-Identifier: BSD-3-Clause
+-/*
+- * Camera test override (step 9, docs/research/33 "CAMERA"): CAMSS without iommus. The VFE completes frames but its
+- * writes never land with the downstream ife bank (0x840 mask 0x620) mapped. Without the mapping the buffers get
+- * physical addresses: either the writes now land (stream passed through), or the SMMU reports a fault that names the
+- * real VFE stream IDs. Test only.
+- */
+-
+-&duo_camss {
+-	/delete-property/ iommus;
+-};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-flash.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-flash.dtsi
+new file mode 100644
+index 000000000..0c764090e
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-flash.dtsi
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1: the camera's High CRI LED flash on the PM8150L flash LED module (2026-11-05; was an fdtoverlay,
++ * duo-flash-overlay.dts, folded into the board DT 2026-11-07). Values from the phone's own Android DT (dtbo overlay dt31
++ * = DV_A): rear camera-flash -> flash_0 (id 0, max 1200 mA, 1280 ms) + torch_0 (id 0, 135 mA). Mainline channels count
++ * from 1, so id 0 = led-sources <1>. Flash current 500 mA (Android allows 1200) until the LED is characterised.
++ * Driver: drivers/leds/flash/leds-qcom-flash.c.
++ */
++
++&{/soc@0/spmi@c440000/pmic@5/led-controller@d300} {
++	status = "okay";
++
++	led-0 {
++		function = "flash";
++		color = <0>;		/* LED_COLOR_ID_WHITE */
++		led-sources = <1>;
++		led-max-microamp = <135000>;
++		flash-max-microamp = <500000>;
++		flash-max-timeout-us = <1280000>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi
+deleted file mode 100644
+index 4b464d87d..000000000
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-imx351-bob.dtsi
++++ /dev/null
+@@ -1,11 +0,0 @@
+-// SPDX-License-Identifier: BSD-3-Clause
+-/*
+- * Camera test override (step 7, docs/research/33 "CAMERA"): downstream gives the IMX351 cam_bob-supply = PM8150L BOB
+- * at 3.3 V with "pwm-switch" (PWM mode while the camera runs); the board's vana 2.8 V switch is fed from BOB, which
+- * mainline leaves at 3.008 V in AUTO mode. Theory: the pixel array starves (the sensor only sent embedded-data lines).
+- */
+-
+-&vreg_bob {
+-	regulator-min-microvolt = <3296000>;
+-	regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+-};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi
+deleted file mode 100644
+index 3126c30b0..000000000
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-ipa.dtsi
++++ /dev/null
+@@ -1,73 +0,0 @@
+-// SPDX-License-Identifier: BSD-3-Clause
+-/*
+- * Surface Duo (SM8150): IPA v4.1 (modem data path) - DRAFT, TEST DTB ONLY.
+- * Needs tools/linux/patches/ipa-v4.1 (compatible "qcom,sm8150-ipa").
+- * Values from the phone's downstream DT (qcom,ipa@1e00000, ipa_smmu_ap/uc, smp2p "ipa"
+- * entries, pil_ipa_fw_region) mapped onto the mainline sc7180/sdm845 node layout.
+- * See docs/research/workbench/ipa-v4.1.md. Firmware: vendor_a /firmware/ipa_fws.*,
+- * linked at boot to /lib/firmware/qcom/sm8150/ (never stored in the repo).
+- */
+-
+-&{/smp2p-mpss} {
+-	ipa_smp2p_out: ipa-ap-to-modem {
+-		qcom,entry-name = "ipa";
+-		#qcom,smem-state-cells = <1>;
+-	};
+-
+-	ipa_smp2p_in: ipa-modem-to-ap {
+-		qcom,entry-name = "ipa";
+-		interrupt-controller;
+-		#interrupt-cells = <2>;
+-	};
+-};
+-
+-&soc {
+-	ipa: ipa@1e40000 {
+-		compatible = "qcom,sm8150-ipa";
+-
+-		/* downstream ipa_smmu_ap (0x520) + ipa_smmu_uc (0x522) */
+-		iommus = <&apps_smmu 0x520 0x0>,
+-			 <&apps_smmu 0x522 0x0>;
+-		/* ipa-base 0x1e00000 + v4.0 reg offset 0x40000; SRAM direct access at +0x7000;
+-		 * layout ends at 0x280 + 0x2800 (ipa_4_1_mem_part), hence 0x3000 */
+-		reg = <0 0x01e40000 0 0x7000>,
+-		      <0 0x01e47000 0 0x3000>,
+-		      <0 0x01e04000 0 0x2c000>;
+-		reg-names = "ipa-reg",
+-			    "ipa-shared",
+-			    "gsi";
+-
+-		interrupts-extended = <&intc GIC_SPI 311 IRQ_TYPE_EDGE_RISING>,
+-				      <&intc GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>,
+-				      <&ipa_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
+-				      <&ipa_smp2p_in 1 IRQ_TYPE_EDGE_RISING>;
+-		interrupt-names = "ipa",
+-				  "gsi",
+-				  "ipa-clock-query",
+-				  "ipa-setup-ready";
+-
+-		clocks = <&rpmhcc RPMH_IPA_CLK>;
+-		clock-names = "core";
+-
+-		interconnects = <&aggre2_noc MASTER_IPA 0 &mc_virt SLAVE_EBI_CH0 0>,
+-				<&aggre2_noc MASTER_IPA 0 &system_noc SLAVE_OCIMEM 0>,
+-				<&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_IPA_CFG 0>;
+-		interconnect-names = "memory",
+-				     "imem",
+-				     "config";
+-
+-		qcom,qmp = <&aoss_qmp>;
+-
+-		qcom,smem-states = <&ipa_smp2p_out 0>,
+-				   <&ipa_smp2p_out 1>;
+-		qcom,smem-state-names = "ipa-clock-enabled-valid",
+-					"ipa-clock-enabled";
+-
+-		/* TZ PAS 15 authenticates the GSI firmware the AP loads */
+-		qcom,gsi-loader = "self";
+-		memory-region = <&ipa_fw_mem>;
+-		firmware-name = "qcom/sm8150/ipa_fws.mdt";
+-
+-		status = "okay";
+-	};
+-};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi
+deleted file mode 100644
+index d00e5011a..000000000
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-l17a-3v0.dtsi
++++ /dev/null
+@@ -1,12 +0,0 @@
+-// SPDX-License-Identifier: BSD-3-Clause
+-/*
+- * Surface Duo 1: run PM8150 L17A (vpnl of the R2 panel on DSI1 = the camera-side screen) at 3.0 V like Microsoft's
+- * downstream kernel (Droidian regulator dump 2026-11-05: pm8150_l17 enabled 3000000 uV, consumer
+- * soc:qcom,dsi-display-secondary-vpnl). The mainline Duo DT allows 2856000..3008000 and the regulator core settles on
+- * the minimum (2.856 V); that panel's FIRST init fails on most boots (docs/research/33 "Boot panel fault").
+- */
+-
+-&vreg_l17a_3p0 {
+-	regulator-min-microvolt = <3000000>;
+-	regulator-max-microvolt = <3008000>;
+-};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi
+deleted file mode 100644
+index f025778e4..000000000
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-venus-axicrst.dtsi
++++ /dev/null
+@@ -1,74 +0,0 @@
+-// SPDX-License-Identifier: BSD-3-Clause
+-/*
+- * Surface Duo 1: Venus video codec (IRIS1) for the venus driver patched by patches/venus-sm8150-iris1.py
+- * (docs/research/33 "VENUS PORT SPEC"). Placement, clocks, resets and the IOMMU stream come from the phone's own
+- * downstream DT (qcom,vidc@aa00000, "qcom,sm8150-vidc"); the node layout follows mainline's sm8250 venus.
+- * Firmware: the phone's own modem_a image/venus.mdt, linked at boot to /lib/firmware/qcom/sm8150/microsoft/ by init.
+- * Test only via a one-shot DTB (build-test-dtb.sh) with venus as a module loaded by hand.
+- */
+-#include <dt-bindings/clock/qcom,gcc-sm8150.h>
+-#include <dt-bindings/clock/qcom,videocc-sm8150.h>
+-#include <dt-bindings/interconnect/qcom,sm8150.h>
+-#include <dt-bindings/power/qcom-rpmpd.h>
+-
+-&{/soc@0} {
+-	venus: video-codec@aa00000 {
+-		compatible = "qcom,sm8150-venus";
+-		reg = <0 0x0aa00000 0 0x100000>;
+-		interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
+-
+-		power-domains = <&videocc VENUS_GDSC>,
+-				<&videocc VCODEC0_GDSC>,
+-				<&rpmhpd SM8150_MX>;
+-		power-domain-names = "venus", "vcodec0", "mx";
+-		operating-points-v2 = <&duo_venus_opp_table>;
+-
+-		clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
+-			 <&videocc VIDEO_CC_MVSC_CORE_CLK>,
+-			 <&videocc VIDEO_CC_MVS0_CORE_CLK>,
+-			 <&gcc GCC_VIDEO_AXIC_CLK>,
+-			 <&gcc GCC_VIDEO_AXI1_CLK>;
+-		clock-names = "iface", "core", "vcodec0_core", "axic", "axi1";
+-
+-		interconnects = <&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_VENUS_CFG 0>,
+-				<&mmss_noc MASTER_VIDEO_P0 0 &mc_virt SLAVE_EBI_CH0 0>;
+-		interconnect-names = "cpu-cfg", "video-mem";
+-
+-		/* ONE stream only: downstream's mask 0x60 (0x2300/20/40/60) hard-hung the boot as soon as the SMMU registered
+-		 * (2026-11-04) - an SMR overlapping streams the hypervisor/TZ owns; 0x2300 alone boots (iommu group 10) */
+-		iommus = <&apps_smmu 0x2300 0x0>;
+-		memory-region = <&venus_mem>;
+-
+-		resets = <&gcc GCC_VIDEO_AXIC_CLK_BCR>,
+-			 <&videocc VIDEO_CC_MVSC_CORE_CLK_BCR>;
+-		reset-names = "bus", "core";
+-
+-		firmware-name = "qcom/sm8150/microsoft/venus.mdt";
+-
+-		duo_venus_opp_table: opp-table {
+-			compatible = "operating-points-v2";
+-
+-			opp-240000000 {
+-				opp-hz = /bits/ 64 <240000000>;
+-				required-opps = <&rpmhpd_opp_low_svs>;
+-			};
+-			opp-338000000 {
+-				opp-hz = /bits/ 64 <338000000>;
+-				required-opps = <&rpmhpd_opp_svs>;
+-			};
+-			opp-365000000 {
+-				opp-hz = /bits/ 64 <365000000>;
+-				required-opps = <&rpmhpd_opp_svs_l1>;
+-			};
+-			opp-444000000 {
+-				opp-hz = /bits/ 64 <444000000>;
+-				required-opps = <&rpmhpd_opp_nom>;
+-			};
+-			opp-533000000 {
+-				opp-hz = /bits/ 64 <533000000>;
+-				required-opps = <&rpmhpd_opp_turbo>;
+-			};
+-		};
+-
+-	};
+-};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+index 9ecc7caba..619e42753 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+@@ -541,14 +541,16 @@ &wifi {
+ 	vdd-3.3-ch0-supply = <&vreg_l11c_3p3>;
+ };
+ 
++/* Surface Duo workbench hardware (tools/linux/dts in surface-duo-windows) */
+ #include "sm8150-microsoft-surface-duo-audio.dtsi"
+-
+ #include "sm8150-microsoft-surface-duo-display.dtsi"
+-
+ #include "sm8150-microsoft-surface-duo-workbench.dtsi"
+-
+ #include "sm8150-microsoft-surface-duo-charger.dtsi"
+-
+ #include "sm8150-microsoft-surface-duo-gpu.dtsi"
+-
+ #include "sm8150-microsoft-surface-duo-mic.dtsi"
++#include "sm8150-microsoft-surface-duo-camera.dtsi"
++#include "sm8150-microsoft-surface-duo-camss.dtsi"
++#include "sm8150-microsoft-surface-duo-imx351.dtsi"
++#include "sm8150-microsoft-surface-duo-usbc.dtsi"
++#include "sm8150-microsoft-surface-duo-venus.dtsi"
++#include "sm8150-microsoft-surface-duo-flash.dtsi"

@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:38 -0500
+Subject: [PATCH] power: supply: qcom_smbx: return an error from
+ smb_get_prop_health() for unknown generations
+
+The switch over chip->gen has no default case, so the function could fall off its end without a return value
+(-Wreturn-type). Return -EINVAL.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/power/supply/qcom_smbx.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+index b723dba5b..1e2776f14 100644
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -585,6 +585,7 @@ static int smb_get_prop_health(struct smb_chip *chip, int *val)
+ 	case SMB5:
+ 		return smb5_get_prop_health(chip, val);
+ 	}
++	return -EINVAL;
+ }
+ 
+ static int smb_get_property(struct power_supply *psy,

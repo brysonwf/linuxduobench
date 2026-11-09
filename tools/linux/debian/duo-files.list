@@ -1,0 +1,17 @@
+# Files a Debian Duo system gets from this repo, besides the system layer (tools/linux/system/install.sh).
+# <source relative to tools/linux>:<destination relative to the Debian root>. Read by duo-debian-prepare.sh (dev,
+# from the PC) and duo-debian-bootstrap.sh (installer, on the phone).
+pmos/duo-health.sh:usr/local/sbin/duo-health
+pmos/ucm/conf.d/sdm845/MicrosoftCorporation-SurfaceDuo-1930.conf:usr/share/alsa/ucm2/conf.d/sdm845/MicrosoftCorporation-SurfaceDuo-1930.conf
+pmos/ucm/Microsoft/SurfaceDuo/HiFi.conf:usr/share/alsa/ucm2/Microsoft/SurfaceDuo/HiFi.conf
+pmos/ucm/Microsoft/SurfaceDuo/Speaker.conf:usr/share/alsa/ucm2/Microsoft/SurfaceDuo/Speaker.conf
+pmos/wireplumber/51-duo-no-loopback.conf:etc/wireplumber/wireplumber.conf.d/51-duo-no-loopback.conf
+pmos/pipewire/60-duo-speaker-tuning.conf:etc/pipewire/pipewire.conf.d/60-duo-speaker-tuning.conf
+pmos/78-duo-mm-qcom-soc.rules:etc/udev/rules.d/78-duo-mm-qcom-soc.rules
+pmos/80-duo-udisks-hide-ufs.rules:etc/udev/rules.d/80-duo-udisks-hide-ufs.rules
+pmos/50-duo-sensor-claim.rules:etc/polkit-1/rules.d/50-duo-sensor-claim.rules
+debian/52-duo-default-volume.conf:etc/wireplumber/wireplumber.conf.d/52-duo-default-volume.conf
+debian/nftables.conf:etc/nftables.conf
+debian/org.duo.HingeGap.desktop:etc/xdg/autostart/org.duo.HingeGap.desktop
+debian/chromium-duo:etc/chromium.d/duo
+debian/81-duo-ssc.rules:etc/udev/rules.d/81-duo-ssc.rules

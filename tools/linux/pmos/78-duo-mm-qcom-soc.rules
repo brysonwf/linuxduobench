@@ -1,0 +1,5 @@
+# Surface Duo (2026-11-06): no IPA v4.1 driver yet -> no rmnet_ipa net port, and ModemManager's qcom-soc plugin drops
+# a QMI modem without a net port ("Failed to find a net port in the QMI modem"). A veth stand-in (duo-qmi0, made by the
+# duo-modem service) joins the qcom-soc modem object, so location (QMI LOC), SMS and calls work; mobile data needs the
+# real IPA port (LOOP.md: port IPA v4.1).
+SUBSYSTEM=="net", KERNEL=="duo-qmi0", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc", ENV{ID_MM_CANDIDATE}="1"

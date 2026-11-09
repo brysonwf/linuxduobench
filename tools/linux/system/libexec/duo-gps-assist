@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo GPS assistance (2026-11-07, docs/research/workbench/modem.md "GPS ASSISTANCE WORKS"): the modem accepts
+# injected time + XTRA orbit data only after engine lock = NONE and the XTRA version check is off. This sets both,
+# injects the UTC time and a fresh XTRA file (re-downloaded when older than 24 h), so any location client (ModemManager /
+# geoclue / Maps) starts warm. rmtfs is read-only = nothing persists in the modem: run after every modem start.
+# The XTRA file comes from the modem's own servers (path1..3.xtracloud.net, the URLs the modem reports itself).
+X=/var/cache/duo-gps/xtra3grcej.bin; mkdir -p ${X%/*}
+for i in $(seq 1 60); do wget -q -T 5 --spider http://path1.xtracloud.net/ 2>/dev/null && break; ping -c1 -W2 1.1.1.1 >/dev/null 2>&1 && break; sleep 5; done
+if [ ! -s $X ] || [ -n "$(find $X -mmin +1440 2>/dev/null)" ]; then
+  for h in path1 path2 path3; do wget -q -T 20 -O $X.new http://$h.xtracloud.net/xtra3grcej.bin && [ -s $X.new ] && mv $X.new $X && break; done
+fi
+[ -s $X ] && A="DUO_GPS_XTRA=$X" || A=""
+echo "duo-gps-assist: xtra $( [ -s $X ] && ls -la $X | awk '{print $5" bytes, "$6" "$7" "$8}' || echo missing)"
+env DUO_GPS_LOCK=none DUO_GPS_VERCHECK=0 DUO_GPS_TIME=1 $A timeout 90 /usr/local/bin/duo-gps 5 2>&1 | grep -E "indication|injected|parts|FAILED|duo-gps:"

@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:43 -0500
+Subject: [PATCH] power: supply: qcom_smbx: make the charge current and float
+ voltage writable
+
+Expose CONSTANT_CHARGE_CURRENT (FAST_CHARGE_CURRENT_CFG, 25 mA steps) and CONSTANT_CHARGE_VOLTAGE
+(FLOAT_VOLTAGE_CFG, 7.5 mV steps) so a platform's software JEITA / step-charge policy can set them. Writes are
+clamped to the monitored battery's constant-charge-current-max-microamp and constant-charge-voltage-max-microvolt
+and rejected when the battery does not describe them.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/power/supply/qcom_smbx.c | 52 ++++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+index fdc9e490d..0d46f2509 100644
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -267,6 +267,8 @@ static enum power_supply_property smb_properties[] = {
+ 	POWER_SUPPLY_PROP_HEALTH,
+ 	POWER_SUPPLY_PROP_ONLINE,
+ 	POWER_SUPPLY_PROP_USB_TYPE,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE,
+ };
+ 
+ static int smb_get_prop_usb_online(struct smb_chip *chip, int *val)
+@@ -593,6 +595,46 @@ static int smb_get_prop_health(struct smb_chip *chip, int *val)
+ 	return -EINVAL;
+ }
+ 
++/* writable limits never exceed the battery's own (monitored-battery) maxima */
++#define FV_MIN_UV	3600000
++
++static int smb_get_fcc(struct smb_chip *chip, int *ua)
++{
++	unsigned int v;
++	int rc = regmap_read(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG, &v);
++
++	if (!rc)
++		*ua = (v & FAST_CHARGE_CURRENT_SETTING_MASK) * CURRENT_SCALE_FACTOR;
++	return rc;
++}
++
++static int smb_set_fcc(struct smb_chip *chip, int ua)
++{
++	if (chip->batt_info->constant_charge_current_max_ua <= 0)
++		return -EINVAL;
++	ua = clamp(ua, 0, chip->batt_info->constant_charge_current_max_ua);
++	return regmap_write(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG, ua / CURRENT_SCALE_FACTOR);
++}
++
++static int smb_get_fv(struct smb_chip *chip, int *uv)
++{
++	unsigned int v;
++	int rc = regmap_read(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG, &v);
++
++	if (!rc)
++		*uv = 3487500 + ((int)(v & FLOAT_VOLTAGE_SETTING_MASK) - 1) * 7500;
++	return rc;
++}
++
++static int smb_set_fv(struct smb_chip *chip, int uv)
++{
++	if (chip->batt_info->constant_charge_voltage_max_uv <= FV_MIN_UV)
++		return -EINVAL;
++	uv = clamp(uv, FV_MIN_UV, chip->batt_info->constant_charge_voltage_max_uv);
++	return regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG, FLOAT_VOLTAGE_SETTING_MASK,
++				  (uv - 3487500) / 7500 + 1);
++}
++
+ static int smb_get_property(struct power_supply *psy,
+ 			     enum power_supply_property psp,
+ 			     union power_supply_propval *val)
+@@ -626,6 +668,10 @@ static int smb_get_property(struct power_supply *psy,
+ 		return smb_get_prop_status(chip, &val->intval);
+ 	case POWER_SUPPLY_PROP_HEALTH:
+ 		return smb_get_prop_health(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		return smb_get_fcc(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++		return smb_get_fv(chip, &val->intval);
+ 	case POWER_SUPPLY_PROP_USB_TYPE:
+ 		return smb_apsd_get_charger_type(chip, &val->intval);
+ 	default:
+@@ -646,6 +692,10 @@ static int smb_set_property(struct power_supply *psy,
+ 					  USBIN_SUSPEND_BIT, !val->intval);
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+ 		return smb_set_current_limit(chip, val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		return smb_set_fcc(chip, val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++		return smb_set_fv(chip, val->intval);
+ 	default:
+ 		dev_err(chip->dev, "No setter for property: %d\n", psp);
+ 		return -EINVAL;
+@@ -658,6 +708,8 @@ static int smb_property_is_writable(struct power_supply *psy,
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_STATUS:
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+ 		return 1;
+ 	default:
+ 		return 0;

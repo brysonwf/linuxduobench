@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 12:53:36 -0500
+Subject: [PATCH] ASoC: codecs: wcd934x: no headset detection on boards without
+ a jack
+
+Add the boolean DT property qcom,no-headset-jack. When it is set the codec does not set up MBHC, so set_jack returns
+-ENOTSUPP (which the sdm845 machine driver already accepts). The Surface Duo has no headphone jack: MBHC measured the
+floating HPH/MIC pins at every boot ("Impedance detect ramp error", "MONO plug type detected") and reported a phantom
+headset (Headphone Jack + Headset Mic Jack controls on). The Duo's audio DT sets the property.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ .../bindings/sound/qcom,wcd934x.yaml           |  4 ++++
+ .../sm8150-microsoft-surface-duo-audio.dtsi    |  4 ++++
+ sound/soc/codecs/wcd934x.c                     | 18 ++++++++++++++----
+ 3 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,wcd934x.yaml b/Documentation/devicetree/bindings/sound/qcom,wcd934x.yaml
+index 3a7334e41..cb64266cd 100644
+--- a/Documentation/devicetree/bindings/sound/qcom,wcd934x.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,wcd934x.yaml
+@@ -79,6 +79,10 @@ properties:
+     minimum: 1800000
+     maximum: 2850000
+ 
++  qcom,no-headset-jack:
++    description: The board has no headset jack; the codec's headset detection (MBHC) is not set up
++    type: boolean
++
+   qcom,hphl-jack-type-normally-closed:
+     description: Indicates that HPHL jack switch type is normally closed
+     type: boolean
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
+index 1a1ea787c..b57f514cc 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
+@@ -161,6 +161,10 @@ wcd9340: codec@1,0 {
+ 				qcom,micbias3-microvolt = <1800000>;
+ 				qcom,micbias4-microvolt = <1800000>;
+ 
++				/* The Duo has no headphone jack: without this the codec's headset detection measures the floating
++				 * HPH/MIC pins and reports a phantom mono headset ("Headphone Jack" + "Headset Mic Jack" = on) */
++				qcom,no-headset-jack;
++
+ 				#address-cells = <1>;
+ 				#size-cells = <1>;
+ 
+diff --git a/sound/soc/codecs/wcd934x.c b/sound/soc/codecs/wcd934x.c
+index c8db33f78..59f1bf1b3 100644
+--- a/sound/soc/codecs/wcd934x.c
++++ b/sound/soc/codecs/wcd934x.c
+@@ -549,6 +549,7 @@ struct wcd934x_codec {
+ 	/* mbhc module */
+ 	struct wcd_mbhc *mbhc;
+ 	struct wcd_mbhc_config mbhc_cfg;
++	bool no_headset_jack;
+ 	struct wcd_mbhc_intr intr_ids;
+ 	bool mbhc_started;
+ 	struct mutex micb_lock;
+@@ -2172,9 +2173,11 @@ static int wcd934x_init_dmic(struct snd_soc_component *comp)
+ 	u32 def_dmic_rate, dmic_clk_drv;
+ 	int ret;
+ 
+-	ret = wcd_dt_parse_mbhc_data(comp->dev, &wcd->mbhc_cfg);
+-	if (ret)
+-		return ret;
++	if (!wcd->no_headset_jack) {
++		ret = wcd_dt_parse_mbhc_data(comp->dev, &wcd->mbhc_cfg);
++		if (ret)
++			return ret;
++	}
+ 
+ 	snd_soc_component_update_bits(comp, WCD934X_ANA_MICB1,
+ 				      WCD934X_MICB_VAL_MASK, wcd->common.micb_vout[0]);
+@@ -3019,6 +3022,10 @@ static int wcd934x_comp_probe(struct snd_soc_component *component)
+ 		return ret;
+ 	}
+ 
++	/* boards without a headset jack: no headset detection (it reports a phantom headset on floating pins) */
++	if (wcd->no_headset_jack)
++		return 0;
++
+ 	if (wcd934x_mbhc_init(component))
+ 		dev_err(component->dev, "Failed to Initialize MBHC\n");
+ 
+@@ -5829,6 +5836,8 @@ static int wcd934x_codec_parse_data(struct wcd934x_codec *wcd)
+ 
+ 	of_property_read_u32(dev->parent->of_node, "qcom,dmic-sample-rate",
+ 			     &wcd->dmic_sample_rate);
++	/* dev is the SLIMbus device: its own node is the codec node (dev->parent = the SLIMbus controller) */
++	wcd->no_headset_jack = of_property_read_bool(dev->of_node, "qcom,no-headset-jack");
+ 
+ 	cfg->mbhc_micbias = MIC_BIAS_2;
+ 	cfg->anc_micbias = MIC_BIAS_2;
+@@ -5839,7 +5848,8 @@ static int wcd934x_codec_parse_data(struct wcd934x_codec *wcd)
+ 	cfg->hs_thr = 1700;
+ 	cfg->hph_thr = 50;
+ 
+-	wcd_dt_parse_mbhc_data(dev, cfg);
++	if (!wcd->no_headset_jack)
++		wcd_dt_parse_mbhc_data(dev, cfg);
+ 
+ 	return 0;
+ }

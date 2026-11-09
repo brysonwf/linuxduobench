@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo charger + battery temperature guard (never one without the other). Stopping it blips the USB link.
+[Unit]
+Description=Surface Duo charger + battery temperature guard
+After=duo-hw.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-charger start
+ExecStop=/usr/libexec/duo/duo-charger stop
+
+[Install]
+WantedBy=multi-user.target

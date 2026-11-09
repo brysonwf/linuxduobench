@@ -1,0 +1,344 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:46 -0500
+Subject: [PATCH] media: venus: add SM8150 (IRIS1) support
+
+SM8150's video core is IRIS1 with HFI 4xx, configured like downstream msm_vidc VPU5: four resets (axic, core, axi0,
+axi1) before the clocks in downstream order, the core clock rate set before boot, VCODEC0 + VCODEC1 powered before
+the AXI clocks (enabling AXIC with them off stalls the bus), vcodec + cvp clocks running with the core, the DSP
+UC-region registers and the VPU5 interrupt mask, LLCC video subcaches handed to the firmware, content-protection
+ranges, and power collapse skipped while the core is busy (retried later). Encoder: work route 2 before the
+properties, CBR instead of VBR_CFR (VBR hangs the firmware), the requested frame size instead of the aligned one.
+The work-route property gets 4xx packetization. Decode and encode tested with ffmpeg h264_v4l2m2m.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/media/platform/qcom/venus/core.c      | 48 ++++++++++++++++
+ drivers/media/platform/qcom/venus/core.h      |  2 +-
+ drivers/media/platform/qcom/venus/hfi_cmds.c  |  7 +++
+ drivers/media/platform/qcom/venus/hfi_venus.c | 56 +++++++++++++++++++
+ .../media/platform/qcom/venus/pm_helpers.c    | 26 ++++++++-
+ drivers/media/platform/qcom/venus/venc.c      | 23 ++++++++
+ 6 files changed, 160 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/venus/core.c b/drivers/media/platform/qcom/venus/core.c
+index 24d2b2fd0..8d7023590 100644
+--- a/drivers/media/platform/qcom/venus/core.c
++++ b/drivers/media/platform/qcom/venus/core.c
+@@ -949,6 +949,15 @@ static const struct venus_resources sc7180_res = {
+ 	.enc_nodename = "video-encoder",
+ };
+ 
++/* SM8150_IRIS1 (Surface Duo): downstream qcom,allowed-clock-rates; bandwidth tables borrowed from SM8250 */
++static const struct freq_tbl sm8150_freq_table[] = {
++	{ 0, 533000000 },
++	{ 0, 444000000 },
++	{ 0, 365000000 },
++	{ 0, 338000000 },
++	{ 0, 240000000 },
++};
++
+ static const struct freq_tbl sm8250_freq_table[] = {
+ 	{ 0, 444000000 },
+ 	{ 0, 366000000 },
+@@ -1006,6 +1015,44 @@ static const struct venus_resources sm8250_res = {
+ 	.enc_nodename = "video-encoder",
+ };
+ 
++static const struct venus_resources sm8150_res = {
++	.freq_tbl = sm8150_freq_table,
++	.freq_tbl_size = ARRAY_SIZE(sm8150_freq_table),
++	.bw_tbl_enc = sm8250_bw_table_enc,
++	.bw_tbl_enc_size = ARRAY_SIZE(sm8250_bw_table_enc),
++	.bw_tbl_dec = sm8250_bw_table_dec,
++	.bw_tbl_dec_size = ARRAY_SIZE(sm8250_bw_table_dec),
++	/* downstream enables all three GCC video AXI clocks before the firmware boots */
++	/* downstream msm_vidc order: axic, axi0, axi1, then core */
++	.clks = {"axic", "iface", "axi1", "core"},
++	.clks_num = 4,
++	/* downstream asserts/deasserts all four before the clocks: video_axi(c), core, axi0, axi1 */
++	.resets = { "axic", "core", "axi0", "axi1" },
++	.resets_num = 4,
++	/* downstream vcodec_clk (MVS0) + cvp_clk (MVS1) together */
++	.vcodec0_clks = { "vcodec0_core", "vcodec1_core" },
++	.vcodec_clks_num = 2,
++	.vcodec_pmdomains = (const char *[]) { "venus", "vcodec0", "vcodec1" },
++	.vcodec_pmdomains_num = 3,
++	.opp_pmdomain = (const char *[]) { "mx" },
++	.vcodec_num = 1,
++	.max_load = 7833600,
++	.hfi_version = HFI_VERSION_4XX,
++	.vpu_version = VPU_VERSION_IRIS1,
++	.vmem_id = VIDC_RESOURCE_NONE,
++	.vmem_size = 0,
++	.vmem_addr = 0,
++	.dma_mask = 0xe0000000 - 1,
++	/* content-protection ranges for TZ (downstream __protect_cp_mem); sdm845 values */
++	.cp_start = 0,
++	.cp_size = 0x25800000,	/* downstream venus_ns pool START */
++	.cp_nonpixel_start = 0x1000000,
++	.cp_nonpixel_size = 0x24800000,
++	.fwname = "qcom/sm8150/venus.mbn",	/* the Duo's DT sets firmware-name */
++	.dec_nodename = "video-decoder",
++	.enc_nodename = "video-encoder",
++};
++
+ static const struct freq_tbl sc7280_freq_table[] = {
+ 	{ 0, 460000000 },
+ 	{ 0, 424000000 },
+@@ -1129,6 +1176,7 @@ static const struct of_device_id venus_dt_match[] = {
+ 	{ .compatible = "qcom,sdm660-venus", .data = &sdm660_res, },
+ 	{ .compatible = "qcom,sdm845-venus", .data = &sdm845_res, },
+ 	{ .compatible = "qcom,sdm845-venus-v2", .data = &sdm845_res_v2, },
++	{ .compatible = "qcom,sm8150-venus", .data = &sm8150_res, },	/* SM8150_IRIS1 */
+ 	{ .compatible = "qcom,sm8250-venus", .data = &sm8250_res, },
+ 	{ }
+ };
+diff --git a/drivers/media/platform/qcom/venus/core.h b/drivers/media/platform/qcom/venus/core.h
+index 7506f5d0f..77c91e1ee 100644
+--- a/drivers/media/platform/qcom/venus/core.h
++++ b/drivers/media/platform/qcom/venus/core.h
+@@ -25,7 +25,7 @@
+ 
+ #define VIDC_CLKS_NUM_MAX		4
+ #define VIDC_VCODEC_CLKS_NUM_MAX	2
+-#define VIDC_RESETS_NUM_MAX		2
++#define VIDC_RESETS_NUM_MAX		4	/* SM8150_IRIS1 resets 4 (downstream ahb2axi bridge) */
+ #define VIDC_MAX_HIER_CODING_LAYER 6
+ 
+ #define VENUS_MAX_FPS			240
+diff --git a/drivers/media/platform/qcom/venus/hfi_cmds.c b/drivers/media/platform/qcom/venus/hfi_cmds.c
+index 3ae063094..103531b2a 100644
+--- a/drivers/media/platform/qcom/venus/hfi_cmds.c
++++ b/drivers/media/platform/qcom/venus/hfi_cmds.c
+@@ -1289,6 +1289,13 @@ pkt_session_set_property_4xx(struct hfi_session_set_property_pkt *pkt,
+ 	case HFI_PROPERTY_PARAM_VENC_SESSION_QP_RANGE:
+ 		/* not implemented on Venus 4xx */
+ 		return -ENOTSUPP;
++	case HFI_PROPERTY_PARAM_WORK_ROUTE: {	/* downstream 4xx packetization has it */
++		struct hfi_video_work_route *in = pdata, *wr = prop_data;
++
++		wr->video_work_route = in->video_work_route;
++		pkt->shdr.hdr.size += sizeof(u32) + sizeof(*wr);
++		break;
++	}
+ 	default:
+ 		return pkt_session_set_property_3xx(pkt, cookie, ptype, pdata);
+ 	}
+diff --git a/drivers/media/platform/qcom/venus/hfi_venus.c b/drivers/media/platform/qcom/venus/hfi_venus.c
+index d3da35f67..e71ec9540 100644
+--- a/drivers/media/platform/qcom/venus/hfi_venus.c
++++ b/drivers/media/platform/qcom/venus/hfi_venus.c
+@@ -11,6 +11,7 @@
+ #include <linux/iopoll.h>
+ #include <linux/kernel.h>
+ #include <linux/slab.h>
++#include <linux/soc/qcom/llcc-qcom.h>
+ 
+ #include "core.h"
+ #include "hfi_cmds.h"
+@@ -477,6 +478,9 @@ static int venus_boot_core(struct venus_hfi_device *hdev)
+ 		mask_val = readl(wrapper_base + WRAPPER_INTR_MASK);
+ 		mask_val &= ~(WRAPPER_INTR_MASK_A2HWD_BASK_V6 |
+ 			      WRAPPER_INTR_MASK_A2HCPU_MASK);
++	} else if (IS_IRIS1(hdev->core)) {	/* SM8150 (IRIS1): downstream interrupt_init_vpu5 (A2HWD is bit 4 here) */
++		mask_val = readl(wrapper_base + WRAPPER_INTR_MASK);
++		mask_val &= ~(0x10 | WRAPPER_INTR_MASK_A2HCPU_MASK);
+ 	} else {
+ 		mask_val = WRAPPER_INTR_MASK_A2HVCODEC_MASK;
+ 	}
+@@ -544,6 +548,13 @@ static int venus_run(struct venus_hfi_device *hdev)
+ 
+ 	writel(hdev->ifaceq_table.da, cpu_cs_base + UC_REGION_ADDR);
+ 	writel(SHARED_QSIZE, cpu_cs_base + UC_REGION_SIZE);
++	if (IS_IRIS1(hdev->core)) {	/* SM8150 (IRIS1): setup_dsp_uc_memmap_vpu5 + clock_config_on_enable_vpu5 */
++		writel(hdev->ifaceq_table.da, cpu_cs_base + 0x34);	/* HFI_DSP_QTBL_ADDR */
++		writel(hdev->ifaceq_table.da, cpu_cs_base + 0x38);	/* HFI_DSP_UC_REGION_ADDR */
++		writel(SHARED_QSIZE, cpu_cs_base + 0x3c);		/* HFI_DSP_UC_REGION_SIZE */
++		writel(0, hdev->core->wrapper_base + WRAPPER_CPU_CGC_DIS);
++		writel(0, hdev->core->wrapper_base + WRAPPER_CPU_CLOCK_CONFIG);
++	}
+ 	writel(hdev->ifaceq_table.da, cpu_cs_base + CPU_CS_SCIACMDARG2);
+ 	writel(0x01, cpu_cs_base + CPU_CS_SCIACMDARG1);
+ 	if (hdev->sfr.da)
+@@ -943,6 +954,46 @@ static int venus_get_queue_size(struct venus_hfi_device *hdev,
+ 	return abs(qhdr->read_idx - qhdr->write_idx);
+ }
+ 
++/* downstream __enable_subcaches + __set_subcaches (VPU5 = SM8150 IRIS1) */
++static void venus_iris1_set_syscache(struct venus_hfi_device *hdev)
++{
++	static const u32 uids[] = { LLCC_VIDSC0, LLCC_VIDSC1 };
++	struct device *dev = hdev->core->dev;
++	u32 buf[16] = { 0 };
++	struct hfi_sys_set_resource_pkt *pkt = (void *)buf;
++	u32 n = 0, i;
++	int ret;
++
++	for (i = 0; i < ARRAY_SIZE(uids); i++) {
++		struct llcc_slice_desc *d = llcc_slice_getd(uids[i]);
++
++		if (IS_ERR_OR_NULL(d)) {
++			dev_warn(dev, "llcc slice %u unavailable (%ld)\n", uids[i], PTR_ERR(d));
++			continue;
++		}
++		ret = llcc_slice_activate(d);
++		if (ret) {
++			dev_warn(dev, "llcc slice %u activate failed (%d)\n", uids[i], ret);
++			continue;
++		}
++		pkt->resource_data[1 + 2 * n] = llcc_get_slice_size(d);
++		pkt->resource_data[2 + 2 * n] = llcc_get_slice_id(d);
++		dev_dbg(dev, "syscache slice uid %u id %d size %zu KB\n", uids[i],
++			 llcc_get_slice_id(d), llcc_get_slice_size(d));
++		n++;
++	}
++	if (!n)
++		return;
++
++	pkt->hdr.size = sizeof(*pkt) + sizeof(u32) * (1 + 2 * n);
++	pkt->hdr.pkt_type = HFI_CMD_SYS_SET_RESOURCE;
++	pkt->resource_handle = 0x5ca1ab1e;
++	pkt->resource_type = 2;		/* HFI_RESOURCE_SYSCACHE */
++	pkt->resource_data[0] = n;
++	ret = venus_iface_cmdq_write(hdev, pkt, false);
++	dev_dbg(dev, "syscache set resource (%u slices) sent: %d\n", n, ret);
++}
++
+ static int venus_sys_set_default_properties(struct venus_hfi_device *hdev)
+ {
+ 	struct device *dev = hdev->core->dev;
+@@ -972,6 +1023,9 @@ static int venus_sys_set_default_properties(struct venus_hfi_device *hdev)
+ 			dev_warn(dev, "setting ubwc config failed (%d)\n", ret);
+ 	}
+ 
++	if (IS_IRIS1(hdev->core))
++		venus_iris1_set_syscache(hdev);
++
+ 	return ret;
+ }
+ 
+@@ -1616,6 +1670,8 @@ static int venus_suspend_3xx(struct venus_core *core)
+ 				 1500, 100 * 1500);
+ 	if (ret) {
+ 		dev_err(dev, "wait for cpu and video core idle fail (%d)\n", ret);
++		if (IS_IRIS1(core))	/* like downstream, skip PC while busy (retried later) */
++			return -EBUSY;
+ 		return ret;
+ 	}
+ 
+diff --git a/drivers/media/platform/qcom/venus/pm_helpers.c b/drivers/media/platform/qcom/venus/pm_helpers.c
+index f0269524a..b181d5886 100644
+--- a/drivers/media/platform/qcom/venus/pm_helpers.c
++++ b/drivers/media/platform/qcom/venus/pm_helpers.c
+@@ -59,7 +59,8 @@ static int core_clks_enable(struct venus_core *core)
+ 	}
+ 
+ 	for (i = 0; i < res->clks_num; i++) {
+-		if (IS_V6(core) || (IS_V4(core) && is_lite(core))) {
++		/* SM8150 (IRIS1): the core clock has no rate after boot -> the ARM9 never ran */
++		if (IS_V6(core) || (IS_V4(core) && is_lite(core)) || IS_IRIS1(core)) {
+ 			ret = clk_set_rate(core->clks[i], freq);
+ 			if (ret)
+ 				goto err;
+@@ -1034,6 +1035,14 @@ static int core_power_v4(struct venus_core *core, int on)
+ 				return ret;
+ 			}
+ 		}
++		/* SM8150 (IRIS1): power VCODEC0 + VCODEC1 (downstream 'vcodec' + 'cvp' supplies) BEFORE the AXI clocks -
++		 * enabling GCC_VIDEO_AXIC with them off stalled the bus */
++		if (IS_IRIS1(core) && core->pmdomains) {
++			unsigned int d;
++
++			for (d = 1; d < core->pmdomains->num_pds; d++)
++				pm_runtime_get_sync(core->pmdomains->pd_devs[d]);
++		}
+ 
+ 		ret = core_resets_reset(core);
+ 		if (ret) {
+@@ -1043,6 +1052,12 @@ static int core_power_v4(struct venus_core *core, int on)
+ 		}
+ 
+ 		ret = core_clks_enable(core);
++		/* downstream runs vcodec_clk + cvp_clk with the core (encoder setup needs them) */
++		if (!ret && IS_IRIS1(core)) {
++			ret = vcodec_clks_enable(core, core->vcodec0_clks);
++			if (ret)
++				core_clks_disable(core);
++		}
+ 		if (ret < 0 && pmctrl)
+ 			pm_runtime_put_sync(pmctrl);
+ 	} else {
+@@ -1050,10 +1065,19 @@ static int core_power_v4(struct venus_core *core, int on)
+ 		if (core->opp_pmdomain)
+ 			dev_pm_opp_set_rate(dev, 0);
+ 
++		if (IS_IRIS1(core))
++			vcodec_clks_disable(core, core->vcodec0_clks);
+ 		core_clks_disable(core);
+ 
+ 		ret = core_resets_reset(core);
+ 
++		if (IS_IRIS1(core) && core->pmdomains) {	/* SM8150_IRIS1 */
++			unsigned int d;
++
++			for (d = 1; d < core->pmdomains->num_pds; d++)
++				pm_runtime_put_sync(core->pmdomains->pd_devs[d]);
++		}
++
+ 		if (pmctrl)
+ 			pm_runtime_put_sync(pmctrl);
+ 	}
+diff --git a/drivers/media/platform/qcom/venus/venc.c b/drivers/media/platform/qcom/venus/venc.c
+index b9701b54f..2ea0676fd 100644
+--- a/drivers/media/platform/qcom/venus/venc.c
++++ b/drivers/media/platform/qcom/venus/venc.c
+@@ -284,8 +284,19 @@ static int venc_s_fmt(struct file *file, void *fh, struct v4l2_format *f)
+ 	format.fmt.pix_mp.height = orig_pixmp.height;
+ 	venc_try_fmt_common(inst, &format);
+ 
++	u32 prev_w = inst->width, prev_h = inst->height;
+ 	inst->width = format.fmt.pix_mp.width;
+ 	inst->height = format.fmt.pix_mp.height;
++	/* SM8150 (IRIS1): encode the requested size, not the 16-aligned buffer size (720 lines, not 736) */
++	if (IS_IRIS1(inst->core) && orig_pixmp.width && orig_pixmp.height) {
++		if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
++			inst->width = min_t(u32, ALIGN(orig_pixmp.width, 2), inst->width);
++			inst->height = min_t(u32, ALIGN(orig_pixmp.height, 2), inst->height);
++		} else if (prev_w && prev_h) {
++			inst->width = prev_w;
++			inst->height = prev_h;
++		}
++	}
+ 
+ 	if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
+ 		inst->fmt_out = fmt;
+@@ -676,6 +687,15 @@ static int venc_set_properties(struct venus_inst *inst)
+ 	if (ret)
+ 		return ret;
+ 
++	/* SM8150 (IRIS1): the firmware wants a work route before the encoder properties (downstream sends 2) */
++	if (IS_IRIS1(inst->core)) {
++		struct hfi_video_work_route wr = { .video_work_route = 2 };
++
++		ret = hfi_session_set_property(inst, HFI_PROPERTY_PARAM_WORK_ROUTE, &wr);
++		if (ret)
++			return ret;
++	}
++
+ 	ptype = HFI_PROPERTY_CONFIG_FRAME_RATE;
+ 	frate.buffer_type = HFI_BUFFER_OUTPUT;
+ 	frate.framerate = inst->fps * (1 << 16);
+@@ -827,6 +847,9 @@ static int venc_set_properties(struct venus_inst *inst)
+ 	else if (ctr->bitrate_mode == V4L2_MPEG_VIDEO_BITRATE_MODE_CQ)
+ 		rate_control = HFI_RATE_CONTROL_CQ;
+ 
++	/* SM8150 (IRIS1): RATE_CONTROL = VBR_CFR hangs the firmware; CBR_CFR keeps the requested bitrate */
++	if (IS_IRIS1(inst->core) && rate_control == HFI_RATE_CONTROL_VBR_CFR)
++		rate_control = HFI_RATE_CONTROL_CBR_CFR;
+ 	ptype = HFI_PROPERTY_PARAM_VENC_RATE_CONTROL;
+ 	ret = hfi_session_set_property(inst, ptype, &rate_control);
+ 	if (ret)

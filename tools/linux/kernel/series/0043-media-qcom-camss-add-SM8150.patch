@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:46 -0500
+Subject: [PATCH] media: qcom: camss: add SM8150
+
+SM8150's Titan 175 uses the sdm845 CSIPHY/CSID/VFE layout plus interconnect votes. The IFE only reaches IOVAs below
+0xE0000000 (writes above it vanish), and the GCC camera AXI clocks (HF + SF) must run with the VFEs or no data
+lands in memory.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/media/platform/qcom/camss/camss.c | 110 +++++++++++++++++++++-
+ 1 file changed, 109 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index fcc2b2c3c..e361487dd 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -4652,7 +4652,9 @@ static int camss_probe(struct platform_device *pdev)
+ 	if (ret < 0)
+ 		goto err_genpd_cleanup;
+ 
+-	ret = dma_set_mask_and_coherent(dev, 0xffffffff);
++	/* the SM8150 IFE only addresses IOVAs below 0xE0000000 */
++	ret = dma_set_mask_and_coherent(dev, of_device_is_compatible(dev->of_node, "qcom,sm8150-camss") ?
++					0xe0000000 - 1 : 0xffffffff);
+ 	if (ret)
+ 		goto err_genpd_cleanup;
+ 
+@@ -4864,6 +4866,111 @@ static const struct camss_resources sdm845_resources = {
+ 	.vfe_num = ARRAY_SIZE(vfe_res_845),
+ };
+ 
++/* SM8150: sdm845 VFEs + the GCC camera AXI clocks */
++static const struct camss_subdev_resources vfe_res_8150[] = {
++	/* VFE0 */
++	{
++		.regulators = {},
++		.clock = { "gcc_camera_axi", "gcc_camera_sf_axi", "camnoc_axi", "cpas_ahb", "slow_ahb_src",
++				"soc_ahb", "vfe0", "vfe0_axi",
++				"vfe0_src", "csi0",
++				"csi0_src"},
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 80000000 },
++				{ 0 },
++				{ 19200000, 100000000, 320000000, 404000000, 480000000, 600000000 },
++				{ 0 },
++				{ 320000000 },
++				{ 19200000, 75000000, 384000000, 538666667 },
++				{ 384000000 } },
++		.reg = { "vfe0" },
++		.interrupt = { "vfe0" },
++		.vfe = {
++			.line_num = 4,
++			.pd_name = "ife0",
++			.has_pd = true,
++			.hw_ops = &vfe_ops_170,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++
++	/* VFE1 */
++	{
++		.regulators = {},
++		.clock = { "gcc_camera_axi", "gcc_camera_sf_axi", "camnoc_axi", "cpas_ahb", "slow_ahb_src",
++				"soc_ahb", "vfe1", "vfe1_axi",
++				"vfe1_src", "csi1",
++				"csi1_src"},
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 80000000 },
++				{ 0 },
++				{ 19200000, 100000000, 320000000, 404000000, 480000000, 600000000 },
++				{ 0 },
++				{ 320000000 },
++				{ 19200000, 75000000, 384000000, 538666667 },
++				{ 384000000 } },
++		.reg = { "vfe1" },
++		.interrupt = { "vfe1" },
++		.vfe = {
++			.line_num = 4,
++			.pd_name = "ife1",
++			.has_pd = true,
++			.hw_ops = &vfe_ops_170,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++
++	/* VFE-lite */
++	{
++		.regulators = {},
++		.clock = { "gcc_camera_axi", "gcc_camera_sf_axi", "camnoc_axi", "cpas_ahb", "slow_ahb_src",
++				"soc_ahb", "vfe_lite",
++				"vfe_lite_src", "csi2",
++				"csi2_src"},
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 80000000 },
++				{ 0 },
++				{ 19200000, 100000000, 320000000, 404000000, 480000000, 600000000 },
++				{ 320000000 },
++				{ 19200000, 75000000, 384000000, 538666667 },
++				{ 384000000 } },
++		.reg = { "vfe_lite" },
++		.interrupt = { "vfe_lite" },
++		.vfe = {
++			.is_lite = true,
++			.line_num = 4,
++			.hw_ops = &vfe_ops_170,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	}
++};
++
++/* SM8150 (Surface Duo): Titan 175 = sdm845 layout + interconnect votes */
++static const struct camss_resources sm8150_resources = {
++	.version = CAMSS_845,
++	.pd_name = "top",
++	.csiphy_res = csiphy_res_845,
++	.csid_res = csid_res_845,
++	.vfe_res = vfe_res_8150,
++	.icc_res = icc_res_sm8250,
++	.icc_path_num = ARRAY_SIZE(icc_res_sm8250),
++	.csiphy_num = ARRAY_SIZE(csiphy_res_845),
++	.csid_num = ARRAY_SIZE(csid_res_845),
++	.vfe_num = ARRAY_SIZE(vfe_res_8150),
++};
++
+ static const struct camss_resources sm8250_resources = {
+ 	.version = CAMSS_8250,
+ 	.pd_name = "top",
+@@ -4959,6 +5066,7 @@ static const struct of_device_id camss_dt_match[] = {
+ 	{ .compatible = "qcom,sdm660-camss", .data = &sdm660_resources },
+ 	{ .compatible = "qcom,sdm670-camss", .data = &sdm670_resources },
+ 	{ .compatible = "qcom,sdm845-camss", .data = &sdm845_resources },
++	{ .compatible = "qcom,sm8150-camss", .data = &sm8150_resources },
+ 	{ .compatible = "qcom,sm8250-camss", .data = &sm8250_resources },
+ 	{ .compatible = "qcom,sm8550-camss", .data = &sm8550_resources },
+ 	{ .compatible = "qcom,sm8650-camss", .data = &sm8650_resources },

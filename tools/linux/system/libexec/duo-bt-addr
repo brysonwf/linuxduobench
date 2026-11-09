@@ -1,0 +1,55 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo: give Bluetooth the phone's OWN address. Source: persist bluetooth/.bt_nv.bin = Qualcomm BT NV:
+# [01 = one record][01 = BD_ADDR tag][06 = length][6 bytes, LSB first]. Read at boot, never stored or printed (a device
+# identifier; public repo). Run as root after bluetoothd started.
+# The DT leaves local-bd-address all-zero (2026-11-08: a non-zero DT address was applied again on every controller
+# setup and overwrote ours), so the controller stays "unconfigured" until this sets the address - with the old fixed
+# placeholder 02:D0:05:00:00:01 when persist has none, so Bluetooth always comes up.
+# Also repairs a controller whose first setup failed: on the ABL boot path the chip is probed ~0.5 s after power-on and
+# does not answer yet ("Reading QCA version information failed (-110)", no retry) - one rebind fixes it.
+part() { for d in /sys/class/block/sd*; do grep -q "^PARTNAME=$1\$" $d/uevent && echo ${d##*/}; done; }
+log() { echo "duo-bt-addr: $*"; }
+for i in $(seq 1 20); do [ -e /sys/class/bluetooth/hci0 ] && break; sleep 1; done
+[ -e /sys/class/bluetooth/hci0 ] || { log "no hci0"; exit 0; }
+
+A=""
+P=/mnt/persist; mkdir -p $P
+if mountpoint -q $P || mount -o ro /dev/$(part persist) $P 2>/dev/null; then
+	F=$P/bluetooth/.bt_nv.bin
+	[ -s $F ] && A=$(od -An -tx1 -v $F | tr -d ' \n' | sed -n 's/^010106\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)$/\6:\5:\4:\3:\2:\1/p' | tr a-f A-F)
+fi
+SRC="the phone's own address"; [ -n "$A" ] || { A=02:D0:05:00:00:01; SRC="the fixed placeholder (persist has none)"; }
+
+# the configured controller's address (bluetoothctl lists only configured controllers; btmgmt can hang - "info" never
+# answered on Debian/BlueZ 5.82 - so bluetoothctl does everything)
+cur() { timeout 5 bluetoothctl show < /dev/null 2>/dev/null | sed -n 's/^Controller \([0-9A-F:]*\).*/\1/p' | head -1; }
+setup_ok() { dmesg 2>/dev/null | grep 'hci0: QCA setup on UART is completed' > /dev/null; }
+rebind() {
+	D=$(basename "$(readlink -f /sys/class/bluetooth/hci0/device)"); R=$(readlink -f /sys/class/bluetooth/hci0/device/driver)
+	[ -n "$D" ] && [ -d "$R" ] || return 1
+	log "controller setup failed - rebinding $D once"
+	echo "$D" > "$R/unbind"; sleep 1; echo "$D" > "$R/bind"
+	for i in $(seq 1 20); do setup_ok && return 0; sleep 1; done; return 1
+}
+apply() {
+	c=$(cur)
+	if [ "$c" != "$A" ]; then
+		# a controller already configured with another address must be off for the change; an unconfigured one (the
+		# DT's all-zero address) takes it directly
+		[ -n "$c" ] && timeout 10 bluetoothctl power off < /dev/null > /dev/null 2>&1
+		# bluetoothctl's management menu (one command per invocation on its command line -> fed on stdin); btmgmt
+		# itself never answered here (2026-11-08)
+		(printf 'mgmt.select 0\n'; sleep 1; printf 'mgmt.public-addr %s\n' "$A"; sleep 3; printf 'quit\n') |
+			timeout 15 bluetoothctl > /dev/null 2>&1
+		# the controller (re)initialises with the address (firmware download again) - wait for it
+		for i in $(seq 1 20); do [ "$(cur)" = "$A" ] && break; sleep 1; done
+		[ "$(cur)" = "$A" ] || return 1
+	fi
+	timeout 10 bluetoothctl power on < /dev/null > /dev/null 2>&1
+	return 0
+}
+# on the ABL path the first setup can fail before this runs (see the top): repair it first
+setup_ok || rebind || { log "the controller does not set up"; exit 0; }
+apply && { log "$SRC applied"; exit 0; }
+log "could not set the address"

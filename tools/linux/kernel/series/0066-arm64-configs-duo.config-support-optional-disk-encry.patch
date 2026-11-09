@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 18:48:57 -0500
+Subject: [PATCH] arm64: configs: duo.config: support optional disk encryption
+
+Build in device mapper and dm-crypt with AES-XTS (ARMv8 crypto extensions) and the userspace crypto API
+cryptsetup uses, so the initramfs can unlock a LUKS2-encrypted system partition before mounting it.
+Encryption stays optional: an unencrypted partition boots as before.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ arch/arm64/configs/duo.config | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/configs/duo.config b/arch/arm64/configs/duo.config
+index 7fd653ecd..e30896524 100644
+--- a/arch/arm64/configs/duo.config
++++ b/arch/arm64/configs/duo.config
+@@ -496,3 +496,11 @@ CONFIG_KPROBE_EVENTS=y
+ CONFIG_INET_UDP_DIAG=y
+ # Mobile data: the IPA v4.1 modem data path (module, loaded before the modem starts)
+ CONFIG_QCOM_IPA=m
++# Optional disk encryption (LUKS2 on the installed system's partition, unlocked by the initramfs): device mapper +
++# dm-crypt built in, aes-xts with the ARMv8 crypto extensions, the userspace crypto API cryptsetup uses
++CONFIG_BLK_DEV_DM=y
++CONFIG_DM_CRYPT=y
++CONFIG_CRYPTO_XTS=y
++CONFIG_CRYPTO_ESSIV=y
++CONFIG_CRYPTO_USER_API_HASH=y
++CONFIG_CRYPTO_USER_API_SKCIPHER=y

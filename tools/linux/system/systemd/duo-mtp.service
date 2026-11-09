@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo MTP share (the phone under "This PC"); the USB link drops for ~2 s while the gadget rebinds
+[Unit]
+Description=Surface Duo MTP share (Downloads, Pictures)
+After=duo-hw.service duo-modem.service local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-mtp start
+ExecStop=/usr/libexec/duo/duo-mtp stop
+
+[Install]
+WantedBy=multi-user.target

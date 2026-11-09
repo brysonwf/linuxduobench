@@ -1,0 +1,221 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Mon, 19 Jan 2026 19:08:02 +0200
+Subject: [PATCH] arm64: dts: qcom: sm8150-hdk: describe WiFi/BT properly
+
+Properly describe the PMU present as a part of the onboard WCN3998
+WiFi/BT chip. Enable Bluetooth part of the chip too.
+
+[    5.479978] Bluetooth: hci0: setting up wcn399x
+[    5.633763] Bluetooth: hci0: QCA Product ID   :0x0000000a
+[    5.645350] Bluetooth: hci0: QCA SOC Version  :0x40010224
+[    5.650906] Bluetooth: hci0: QCA ROM Version  :0x00001001
+[    5.665173] Bluetooth: hci0: QCA Patch Version:0x00006699
+[    5.679356] Bluetooth: hci0: QCA controller version 0x02241001
+[    5.691109] Bluetooth: hci0: QCA Downloading qca/crbtfw21.tlv
+[    6.680102] Bluetooth: hci0: QCA Downloading qca/crnv21.bin
+[    6.842948] Bluetooth: hci0: QCA setup on UART is completed
+
+[   81.510709] ath10k_snoc 18800000.wifi: qmi chip_id 0x30224 chip_family 0x4001 board_id 0x55 soc_id 0x40060000
+[   81.521713] ath10k_snoc 18800000.wifi: qmi fw_version 0x32040163 fw_build_timestamp 2019-10-08 05:42 fw_build_id QC_IMAGE_VERSION_STRING=WLAN.HL.3.2.0-00355-QCAHLSWMTPLZ-1
+[   81.554143] ath10k_snoc 18800000.wifi: failed to fetch board data for bus=snoc,qmi-board-id=55,qmi-chip-id=30224,variant=Qualcomm_sm8150hdk from ath10k/WCN3990/hw1.0/board-2.bin
+[   85.467464] ath10k_snoc 18800000.wifi: wcn3990 hw1.0 target 0x00000008 chip_id 0x00000000 sub 0000:0000
+[   85.478132] ath10k_snoc 18800000.wifi: kconfig debug 0 debugfs 0 tracing 0 dfs 0 testmode 0
+[   85.487223] ath10k_snoc 18800000.wifi: firmware ver  api 5 features wowlan,mgmt-tx-by-reference,non-bmi crc32 b3d4b790
+[   85.758168] ath10k_snoc 18800000.wifi: htt-ver 3.73 wmi-op 4 htt-op 3 cal file max-sta 32 raw 0 hwcrypto 1
+[   85.901630] ath10k_snoc 18800000.wifi: invalid MAC address; choosing random
+
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150-hdk.dts | 141 +++++++++++++++++++++++-
+ 1 file changed, 136 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-hdk.dts b/arch/arm64/boot/dts/qcom/sm8150-hdk.dts
+index 0339a572f..a5618bdab 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-hdk.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-hdk.dts
+@@ -20,6 +20,7 @@ / {
+ 
+ 	aliases {
+ 		serial0 = &uart2;
++		serial1 = &uart13;
+ 	};
+ 
+ 	chosen {
+@@ -66,6 +67,43 @@ hdmi_con: endpoint {
+ 			};
+ 		};
+ 	};
++
++	wcn3998-pmu {
++		compatible = "qcom,wcn3998-pmu";
++
++		pinctrl-0 = <&sw_ctrl_default>;
++		pinctrl-names = "default";
++
++		vddio-supply = <&vreg_s4a_1p8>;
++		vddxo-supply = <&vreg_l7a_1p8>;
++		vddrf-supply = <&vreg_l2c_1p3>;
++		vddch0-supply = <&vreg_l11c_3p3>;
++		vddch1-supply = <&vreg_l10c_3p3>;
++
++		swctrl-gpios = <&tlmm 50 GPIO_ACTIVE_HIGH>;
++
++		regulators {
++			vreg_pmu_io: ldo0 {
++				regulator-name = "vreg_pmu_io";
++			};
++
++			vreg_pmu_xo: ldo1 {
++				regulator-name = "vreg_pmu_xo";
++			};
++
++			vreg_pmu_rf: ldo2 {
++				regulator-name = "vreg_pmu_rf";
++			};
++
++			vreg_pmu_ch0: ldo3 {
++				regulator-name = "vreg_pmu_ch0";
++			};
++
++			vreg_pmu_ch1: ldo4 {
++				regulator-name = "vreg_pmu_ch1";
++			};
++		};
++	};
+ };
+ 
+ &apps_rsc {
+@@ -594,6 +632,10 @@ &qupv3_id_1 {
+ 	status = "okay";
+ };
+ 
++&qupv3_id_2 {
++	status = "okay";
++};
++
+ &remoteproc_adsp {
+ 	status = "okay";
+ 
+@@ -626,12 +668,97 @@ lt9611_irq_pin: lt9611-irq-state {
+ 		bias-disable;
+ 	};
+ 
++	qup_uart13_default: qup-uart13-default-state {
++		cts-pins {
++			pins = "gpio43";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-bus-hold;
++		};
++
++		rts-pins {
++			pins = "gpio44";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		tx-pins {
++			pins = "gpio45";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-disable;
++		};
++
++		rx-pins {
++			pins = "gpio46";
++			function = "qup13";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++	};
++
++	qup_uart13_sleep: qup-uart13-sleep-state {
++		cts-pins {
++			pins = "gpio43";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-bus-hold;
++		};
++
++		rts-pins {
++			pins = "gpio44";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-down;
++		};
++
++		tx-pins {
++			pins = "gpio45";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++
++		rx-pins {
++			pins = "gpio46";
++			function = "gpio";
++			drive-strength = <2>;
++			bias-pull-up;
++		};
++	};
++
++	sw_ctrl_default: sw-ctrl-default-state {
++		pins = "gpio50";
++		function = "gpio";
++		bias-pull-down;
++	};
+ };
+ 
+ &uart2 {
+ 	status = "okay";
+ };
+ 
++&uart13 {
++	/delete-property/ interrupts;
++	interrupts-extended = <&intc GIC_SPI 585 IRQ_TYPE_LEVEL_HIGH>,
++			      <&tlmm 46 IRQ_TYPE_EDGE_FALLING>;
++	pinctrl-0 = <&qup_uart13_default>;
++	pinctrl-1 = <&qup_uart13_sleep>;
++	pinctrl-names = "default", "sleep";
++
++	status = "okay";
++
++	bluetooth {
++		compatible = "qcom,wcn3998-bt";
++
++		vddio-supply = <&vreg_pmu_io>;
++		vddxo-supply = <&vreg_pmu_xo>;
++		vddrf-supply = <&vreg_pmu_rf>;
++		vddch0-supply = <&vreg_pmu_ch0>;
++	};
++};
++
+ &ufs_mem_hc {
+ 	status = "okay";
+ 
+@@ -705,12 +832,16 @@ &usb_2_dwc3 {
+ };
+ 
+ &wifi {
+-	status = "okay";
+-
++	/* SoC */
+ 	vdd-0.8-cx-mx-supply = <&vreg_l1a_0p75>;
+-	vdd-1.8-xo-supply = <&vreg_l7a_1p8>;
+-	vdd-1.3-rfa-supply = <&vreg_l2c_1p3>;
+-	vdd-3.3-ch0-supply = <&vreg_l11c_3p3>;
++
++	/* WiFi / BT PMU */
++	vdd-1.8-xo-supply = <&vreg_pmu_xo>;
++	vdd-1.3-rfa-supply = <&vreg_pmu_rf>;
++	vdd-3.3-ch0-supply = <&vreg_pmu_ch0>;
++	vdd-3.3-ch1-supply = <&vreg_pmu_ch1>;
+ 
+ 	qcom,calibration-variant = "Qualcomm_sm8150hdk";
++
++	status = "okay";
+ };

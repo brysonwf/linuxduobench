@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo: the Bluetooth controller gets the phone's own address (from the persist partition)
+[Unit]
+Description=Surface Duo Bluetooth address from persist
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-bt-addr
+TimeoutStartSec=150
+StandardOutput=append:/var/log/duo-bt-addr.log
+StandardError=append:/var/log/duo-bt-addr.log
+
+[Install]
+WantedBy=multi-user.target

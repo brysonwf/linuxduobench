@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 19:32:23 -0500
+Subject: [PATCH] drm/msm: fbdev: flush mmap()ed framebuffer writes through a
+ shadow buffer
+
+msm_fbdev mapped the GEM buffer straight into userspace, so writes into an mmap()ed /dev/fb0 never
+reached fb_dirty. Video-mode panels hide this because they scan memory continuously; command-mode DSI
+panels only update on a flush, and show nothing that userspace draws through fbdev (unl0kr, splash
+and console tools).
+
+Do what drm_fbdev_dma does for such buffers: fbdev draws into a shadow buffer in cached system memory,
+mapped through deferred I/O; fb_dirty copies the damaged lines into the write-combined scanout buffer
+and flushes it. (Mapping the scanout pages through deferred I/O directly makes them cacheable for
+userspace, and the display DMA then reads stale lines: keys pressed in unl0kr came out garbled.)
+
+Tested on a Surface Duo (two command-mode DSC panels): a fill written through mmap() appears on both
+panels (before: unchanged), unl0kr's unlock screen draws and redraws pressed keys cleanly, and the
+typed passphrase reaches cryptsetup.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/msm_fbdev.c | 54 +++++++++++++++++++++++++--------
+ 1 file changed, 42 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_fbdev.c b/drivers/gpu/drm/msm/msm_fbdev.c
+index fd19995b1..b9cc806e3 100644
+--- a/drivers/gpu/drm/msm/msm_fbdev.c
++++ b/drivers/gpu/drm/msm/msm_fbdev.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <linux/fb.h>
++#include <linux/vmalloc.h>
+ 
+ #include <drm/drm_drv.h>
+ #include <drm/drm_crtc_helper.h>
+@@ -18,6 +19,9 @@
+ #include "msm_kms.h"
+ 
+ static bool fbdev = true;
++
++/* the scanout buffer (write-combined GEM vmap) behind the cached shadow fbdev draws into */
++static void *msm_fbdev_scanout;
+ MODULE_PARM_DESC(fbdev, "Enable fbdev compat layer");
+ module_param(fbdev, bool, 0600);
+ 
+@@ -29,14 +33,6 @@ FB_GEN_DEFAULT_DEFERRED_SYSMEM_OPS(msm_fbdev,
+ 				   drm_fb_helper_damage_range,
+ 				   drm_fb_helper_damage_area)
+ 
+-static int msm_fbdev_mmap(struct fb_info *info, struct vm_area_struct *vma)
+-{
+-	struct drm_fb_helper *helper = (struct drm_fb_helper *)info->par;
+-	struct drm_gem_object *bo = msm_framebuffer_bo(helper->fb, 0);
+-
+-	return drm_gem_prime_mmap(bo, vma);
+-}
+-
+ static void msm_fbdev_fb_destroy(struct fb_info *info)
+ {
+ 	struct drm_fb_helper *helper = (struct drm_fb_helper *)info->par;
+@@ -45,7 +41,9 @@ static void msm_fbdev_fb_destroy(struct fb_info *info)
+ 
+ 	DBG();
+ 
++	fb_deferred_io_cleanup(info);
+ 	drm_fb_helper_fini(helper);
++	vfree(info->screen_buffer);
+ 
+ 	/* this will free the backing object */
+ 	msm_gem_put_vaddr(bo);
+@@ -59,7 +57,7 @@ static const struct fb_ops msm_fb_ops = {
+ 	__FB_DEFAULT_DEFERRED_OPS_RDWR(msm_fbdev),
+ 	DRM_FB_HELPER_DEFAULT_OPS,
+ 	__FB_DEFAULT_DEFERRED_OPS_DRAW(msm_fbdev),
+-	.fb_mmap = msm_fbdev_mmap,
++	__FB_DEFAULT_DEFERRED_OPS_MMAP(msm_fbdev),
+ 	.fb_destroy = msm_fbdev_fb_destroy,
+ };
+ 
+@@ -73,6 +71,14 @@ static int msm_fbdev_fb_dirty(struct drm_fb_helper *helper,
+ 	if (!(clip->x1 < clip->x2 && clip->y1 < clip->y2))
+ 		return 0;
+ 
++	/* copy the damaged lines from the cached shadow into the scanout buffer */
++	if (msm_fbdev_scanout) {
++		unsigned int pitch = helper->fb->pitches[0];
++
++		memcpy(msm_fbdev_scanout + clip->y1 * pitch, helper->info->screen_buffer + clip->y1 * pitch,
++		       (clip->y2 - clip->y1) * pitch);
++	}
++
+ 	if (helper->fb->funcs->dirty) {
+ 		ret = helper->fb->funcs->dirty(helper->fb, NULL, 0, 0, clip, 1);
+ 		if (drm_WARN_ONCE(dev, ret, "Dirty helper failed: ret=%d\n", ret))
+@@ -135,15 +141,39 @@ int msm_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
+ 
+ 	drm_fb_helper_fill_info(fbi, helper, sizes);
+ 
+-	fbi->screen_buffer = msm_gem_get_vaddr(bo);
+-	if (IS_ERR(fbi->screen_buffer)) {
+-		ret = PTR_ERR(fbi->screen_buffer);
++	msm_fbdev_scanout = msm_gem_get_vaddr(bo);
++	if (IS_ERR(msm_fbdev_scanout)) {
++		ret = PTR_ERR(msm_fbdev_scanout);
++		msm_fbdev_scanout = NULL;
+ 		goto fail;
+ 	}
++	/*
++	 * fbdev clients draw into a shadow buffer in cached system memory; fb_dirty copies the damaged
++	 * lines into the write-combined scanout buffer. Mapping the scanout pages through deferred I/O
++	 * directly would make them cacheable for userspace, and the display DMA then read stale lines.
++	 */
++	fbi->screen_buffer = vzalloc(bo->size);
++	if (!fbi->screen_buffer) {
++		ret = -ENOMEM;
++		goto fail;
++	}
++	fbi->flags |= FBINFO_VIRTFB | FBINFO_READS_FAST;
+ 	fbi->screen_size = bo->size;
+ 	fbi->fix.smem_start = paddr;
+ 	fbi->fix.smem_len = bo->size;
+ 
++	/*
++	 * Command-mode panels only update on a flush: track writes into the mmap()ed framebuffer
++	 * with deferred I/O so they reach the panel through fb_dirty, like kernel-side drawing does.
++	 * The buffer is a vmap() of shmem pages, which deferred I/O can resolve.
++	 */
++	helper->fbdefio.delay = HZ / 20;
++	helper->fbdefio.deferred_io = drm_fb_helper_deferred_io;
++	fbi->fbdefio = &helper->fbdefio;
++	ret = fb_deferred_io_init(fbi);
++	if (ret)
++		goto fail;
++
+ 	DBG("par=%p, %dx%d", fbi->par, fbi->var.xres, fbi->var.yres);
+ 	DBG("allocated %dx%d fb", fb->width, fb->height);
+ 

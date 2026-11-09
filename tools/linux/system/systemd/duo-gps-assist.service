@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo GPS assistance: XTRA data + time injection into the modem's GNSS engine (background, needs the modem up)
+[Unit]
+Description=Surface Duo GPS assistance (XTRA + time injection)
+After=duo-modem.service NetworkManager.service
+Wants=duo-modem.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/duo/duo-gps-assist
+StandardOutput=append:/var/log/duo-gps-assist.log
+StandardError=append:/var/log/duo-gps-assist.log
+
+[Install]
+WantedBy=multi-user.target

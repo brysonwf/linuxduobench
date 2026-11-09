@@ -1,0 +1,121 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo hardware glue, run before the display manager (distribution- and desktop-neutral; generic-layout.md):
+#  - our kernel modules from /lib/duo/<uname -r> (power key, camera + flash, sound card, haptics, video codec)
+#  - GPU firmware (a630_sqe, a640_gmu, a640_zap.*) linked from the phone's own vendor_a, never stored on this disk
+#  - the speaker DSP tuning made from the phone's own ACDB (duo-speaker-tuning)
+#  - touch: one iptsd per digitizer + udev rules (libinput calibration, WL_OUTPUT, the virtual stylus ignored)
+#  - the second panel on (two-screen mode: duo.dual=1 or /etc/duo/dual) or off
+#  - a live kernel log on disk (/var/log/duo-kmsg.log, the previous boot's kept as .1)
+# Desktop-specific output layout is a hook: /usr/libexec/duo/duo-hw-desktop <dual 0|1> (desktop/phosh writes phoc.ini;
+# Plasma maps touch through kcminputrc, written once at install).
+# usage: duo-hw start|stop
+DUO_NAME=duo-hw; . /usr/libexec/duo/duo-lib.sh
+
+start() {
+	# postmarketOS only: an upgrade of swclock-offset brings back rtc0 (= the broken rtc-efi) - re-point it at the PMIC RTC
+	for f in /usr/bin/swclock-offset-boot /usr/bin/swclock-offset-shutdown; do
+		[ -f $f ] && ! grep -q rtc-pm8xxx $f || continue
+		sed -i 's|^rtc_sys_node="/sys/class/rtc/rtc0/since_epoch"|rtc_sys_node=$(for r in /sys/class/rtc/rtc*; do grep -q pm8xxx $r/name \&\& echo $r/since_epoch; done \| head -1)  # Duo: PMIC RTC|' $f
+		log "re-applied the PMIC RTC fix to $f"
+	done
+	# live kernel log: `cat /dev/kmsg` writes every record at once (a block-buffered `dmesg -w` left the file empty
+	# after a reset)
+	[ -f /var/log/duo-kmsg.log ] && mv -f /var/log/duo-kmsg.log /var/log/duo-kmsg.log.1
+	daemon_alive /run/duo-kmsg.pid || { nohup cat /dev/kmsg > /var/log/duo-kmsg.log 2>&1 < /dev/null & echo $! > /run/duo-kmsg.pid; }
+
+	M=$(duo_modules)
+	ld() { duo_insmod "$@"; }
+	ld qcom-pon                                  # power button + volume-down (pon@800's pwrkey/resin children)
+	for m in led-class-flash leds-qcom-flash; do [ -f $M/$m.ko ] && ld $m; done
+	# camera: media core, then CCI + IMX351 (mode=1 = 1920x1080) + CAMSS
+	if [ -e /proc/device-tree/soc@0/camss@acb3000 ] && [ -f $M/camera/imx351.ko ]; then
+		for m in mc videodev videobuf2-common videobuf2-v4l2 videobuf2-memops; do ld venus/$m; done
+		for m in v4l2-async v4l2-fwnode v4l2-cci videobuf2-dma-sg camcc-sm8150 i2c-qcom-cci; do ld camera/$m; done
+		[ -f $M/camera/dw9719.ko ] && ld camera/dw9719   # autofocus (DW9800L), needs the AF DTB
+		ld camera/imx351 mode=1; ld camera/qcom-camss
+	fi
+	# sound card (off: duo.nosound=1). The WSA8815 amp must be ATTACHED and runtime-ACTIVE when the card binds: a
+	# runtime-suspended wsa881x is regmap cache-only, DAPM marks its widgets On without writing them -> a silent
+	# speaker with the whole path "on" (2026-11-06). power/control=on keeps it awake.
+	if ! grep -q duo.nosound=1 /proc/cmdline; then
+		A=/sys/bus/soundwire/devices/sdw:0:0:0217:2110:00:3
+		for k in $(seq 1 20); do [ "$(cat $A/status 2>/dev/null)" = Attached ] && break; sleep 0.5; done
+		[ -w $A/power/control ] && echo on > $A/power/control
+		ld snd-soc-rt5663; ld snd-soc-sdm845
+	fi
+	[ "$(tr -d '\0' < /proc/device-tree/soc@0/geniqup@8c0000/i2c@884000/da7280@4a/status 2>/dev/null)" = okay ] && ld da7280
+	if [ -e /proc/device-tree/soc@0/video-codec@aa00000 ] && [ -d $M/venus ]; then
+		for m in mc videodev videobuf2-common videobuf2-v4l2 v4l2-mem2mem videobuf2-memops videobuf2-dma-contig venus-core venus-dec venus-enc; do ld venus/$m; done
+	fi
+	log "kernel modules from $M"
+
+	# GPU firmware from vendor_a
+	mkdir -p /lib/firmware/qcom
+	vendor_mount && for f in /mnt/vendor-fw/firmware/a630_sqe.fw /mnt/vendor-fw/firmware/a640_gmu.bin /mnt/vendor-fw/firmware/a640_zap.*; do
+		[ -e "$f" ] && ln -sf "$f" /lib/firmware/qcom/${f##*/}
+	done
+
+	# speaker DSP tuning (adsp-calibration.md): with it the DSP tunes the speaker, so PipeWire's stand-in EQ + limiter
+	# (60-duo-speaker-tuning.conf) must be off; without it (no vendor_a) the stand-in stays on
+	T=/usr/libexec/duo/duo-speaker-tuning; [ -x $T ] || T=/usr/local/sbin/duo-speaker-tuning
+	P=/etc/pipewire/pipewire.conf.d/60-duo-speaker-tuning.conf
+	if [ -x $T ] && $T /mnt/vendor-fw > /dev/null 2>&1; then
+		[ -f $P ] && mv -f $P $P.off
+	else
+		[ -f $P.off ] && [ ! -f $P ] && mv $P.off $P
+	fi
+
+	# touch
+	DUAL=0; { grep -q 'duo.dual=1' /proc/cmdline || [ -f /etc/duo/dual ]; } && DUAL=1
+	IPTSD=$(command -v iptsd); [ -n "$IPTSD" ] || { [ -x /opt/duo/bin/iptsd ] && IPTSD=/opt/duo/bin/iptsd; }; [ -n "$IPTSD" ] || {
+		mkdir -p /mnt/linux; mountpoint -q /mnt/linux || mount -o ro /dev/$(part linux) /mnt/linux; IPTSD=/mnt/linux/opt/bin/iptsd; }
+	mkdir -p /etc/iptsd.d
+	[ -f /etc/iptsd.d/surface-duo-1.conf ] || printf '[Device]\nVendor = 0x045E\nProduct = 0x0C01\n' > /etc/iptsd.d/surface-duo-1.conf
+	sed 's/^Product = 0x0C01/Product = 0x0C02/' /etc/iptsd.d/surface-duo-1.conf > /etc/iptsd.d/surface-duo-1-left.conf
+	nodes() { for e in /sys/class/input/event*; do grep -q "$1" $e/device/name 2>/dev/null && echo ${e##*/}; done; }
+	R=/run/udev/rules.d/90-duo-touch.rules; mkdir -p /run/udev/rules.d; : > $R; ALL=''; i=0
+	# screen by product ID (0C02 = left = DSI-1, 0C01 = DSI-2 camera side); kernels with both on 0C01 fall back to hidraw
+	# order (1st = DSI-2). Both digitizers are mounted alike: the same full-range portrait matrix.
+	for h in $(for h in /sys/class/hidraw/hidraw*; do grep -qiE '045E.*0C0[12]' $h/device/uevent && echo ${h##*/}; done); do
+		i=$((i + 1))
+		if grep -qi '045E.*0C02' /sys/class/hidraw/$h/device/uevent; then F=left
+		elif grep -qiE '045E.*0C02' /sys/class/hidraw/hidraw*/device/uevent; then F=right
+		elif [ $i = 1 ]; then F=right; else F=left; fi
+		if [ $F = right ]; then [ $DUAL = 1 ] || continue; OUT=DSI-2; else OUT=DSI-1; fi
+		CAL="0 -1 1 -1 0 1"
+		daemon_alive /run/duo-iptsd-$h.pid && continue
+		t0=$(nodes 'IPTSD Virtual Touchscreen'); s0=$(nodes 'IPTSD Virtual Stylus')
+		daemon_start /run/duo-iptsd-$h.pid /var/log/duo-iptsd-$h.log $IPTSD /dev/$h
+		for k in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; N=$(nodes 'IPTSD Virtual Touchscreen' | grep -vxF "$t0" | head -1); [ -n "$N" ] && break; done
+		ST=$(nodes 'IPTSD Virtual Stylus' | grep -vxF "$s0" | head -1)
+		echo "KERNEL==\"$N\", ENV{WL_OUTPUT}=\"$OUT\", ENV{LIBINPUT_CALIBRATION_MATRIX}=\"$CAL\"" >> $R
+		[ -n "$ST" ] && echo "KERNEL==\"$ST\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"" >> $R
+		ALL="$ALL $N $ST"
+	done
+	udevadm control --reload
+	for e in $ALL; do udevadm trigger --action=change /sys/class/input/$e; done
+	udevadm settle -t 5
+	log "touch: iptsd on $i digitizer(s), two-screen mode = $DUAL"
+
+	# the second panel
+	# (card1 through UEFI - its framebuffer is card0 - but card0 on the ABL path: find the connector by name)
+	DSI2=$(ls -d /sys/class/drm/card*-DSI-2 2>/dev/null | head -1)
+	if [ $DUAL = 1 ]; then echo detect > $DSI2/status 2>/dev/null
+	else echo off > $DSI2/status 2>/dev/null; fi
+	[ -x /usr/libexec/duo/duo-hw-desktop ] && /usr/libexec/duo/duo-hw-desktop $DUAL
+	return 0
+}
+
+stop() {
+	for p in /run/duo-iptsd-*.pid; do [ -f $p ] && daemon_stop $p; done
+	daemon_stop /run/duo-kmsg.pid
+	for s in /sys/class/drm/card*-DSI-2/status; do echo detect > $s 2>/dev/null; done
+	return 0
+}
+
+case "$1" in
+start) start ;;
+stop) stop ;;
+*) echo "usage: $0 start|stop"; exit 1 ;;
+esac

@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 18:07:38 -0500
+Subject: [PATCH] drm/msm: align kernel-managed GPU iovas of 64 KiB+ objects to
+ 64 KiB
+
+On the Surface Duo (Adreno 640), plasmashell's render targets trigger a
+recurring CCU READ TRANSLATION fault and hangcheck recovery. The faulting
+iova is always 64 KiB aligned and lies just below a UBWC color buffer
+whose flag buffer is only 4 KiB aligned (e.g. flag base 0x1066da000,
+fault at 0x1066d0000 = the flag base rounded down to 64 KiB), i.e. in
+unmapped space before the object.
+
+Kernel-managed VMs allocate iovas with PAGE_SIZE alignment. The
+downstream kgsl driver aligns allocations of 64 KiB and more to 64 KiB;
+do the same so such fetches stay inside the object.
+
+Written with AI assistance (Claude).
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/msm_gem_vma.c | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_gem_vma.c b/drivers/gpu/drm/msm/msm_gem_vma.c
+index 3b9a7cd4b..3eafedeb4 100644
+--- a/drivers/gpu/drm/msm/msm_gem_vma.c
++++ b/drivers/gpu/drm/msm/msm_gem_vma.c
+@@ -382,9 +382,24 @@ msm_gem_vma_new(struct drm_gpuvm *gpuvm, struct drm_gem_object *obj,
+ 	if (vm->managed) {
+ 		BUG_ON(offset != 0);
+ 		BUG_ON(!obj);  /* NULL mappings not valid for kernel managed VM */
+-		ret = drm_mm_insert_node_in_range(&vm->mm, &vma->node,
+-						obj->size, PAGE_SIZE, 0,
+-						range_start, range_end, 0);
++		/*
++		 * Adreno a6xx fetches UBWC flag data in 64 KiB-aligned blocks: a
++		 * render target whose flag buffer starts mid-block makes the CCU
++		 * read below the buffer (iova = flag base rounded down to 64 KiB)
++		 * and fault. The downstream kgsl driver aligns every allocation of
++		 * 64 KiB or more to 64 KiB; do the same where the range allows it.
++		 * Fixed-address ranges (e.g. the GMU icache at 0x4000) keep page
++		 * alignment.
++		 */
++		ret = -ENOSPC;
++		if (obj->size >= SZ_64K)
++			ret = drm_mm_insert_node_in_range(&vm->mm, &vma->node,
++							  obj->size, SZ_64K, 0,
++							  range_start, range_end, 0);
++		if (ret == -ENOSPC)
++			ret = drm_mm_insert_node_in_range(&vm->mm, &vma->node,
++							  obj->size, PAGE_SIZE, 0,
++							  range_start, range_end, 0);
+ 
+ 		if (ret)
+ 			goto err_free_vma;

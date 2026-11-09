@@ -1,0 +1,203 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 22:22:58 -0500
+Subject: [PATCH] ASoC: qcom: qdsp6: q6core: register custom topologies with
+ the DSP
+
+Devices tune their audio with processing chains (topologies) that are not built into the DSP: Android
+registers them at start-up through the AVCS core service. Add that step: deregister all, map a buffer
+holding the definitions, AVCS_CMD_REGISTER_TOPOLOGIES, unmap (the DSP copies them).
+
+The buffer address carries the SMMU stream ID of the caller's "iommus" entry in its upper bits, as
+q6asm-dai does for its buffers: the DSP picks the SMMU context from it. Without it the DSP reads through
+the wrong context, the register command times out and the SoC stalls.
+
+q6core_custom_topologies_ready() tells users whether the running DSP has them (it is false again after a
+DSP restart, when q6core probes anew).
+
+Tested on a Surface Duo (SM8150): the 58 topologies from the phone's own calibration database register
+with status 0, and its speaker topology then opens.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ sound/soc/qcom/qdsp6/q6core.c | 116 ++++++++++++++++++++++++++++++++++
+ sound/soc/qcom/qdsp6/q6core.h |   2 +
+ 2 files changed, 118 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6core.c b/sound/soc/qcom/qdsp6/q6core.c
+index 49cfb32cd..80bf5b2cc 100644
+--- a/sound/soc/qcom/qdsp6/q6core.c
++++ b/sound/soc/qcom/qdsp6/q6core.c
+@@ -13,6 +13,7 @@
+ #include <linux/soc/qcom/apr.h>
+ #include "q6core.h"
+ #include "q6dsp-errno.h"
++#include <linux/dma-mapping.h>
+ 
+ #define ADSP_STATE_READY_TIMEOUT_MS    3000
+ #define Q6_READY_TIMEOUT_MS 100
+@@ -22,6 +23,13 @@
+ #define AVCS_GET_VERSIONS_RSP   0x00012906
+ #define AVCS_CMD_GET_FWK_VERSION	0x001292c
+ #define AVCS_CMDRSP_GET_FWK_VERSION	0x001292d
++#define AVCS_CMD_REGISTER_TOPOLOGIES		0x00012923
++#define AVCS_CMD_SHARED_MEM_MAP_REGIONS		0x00012924
++#define AVCS_CMDRSP_SHARED_MEM_MAP_REGIONS	0x00012925
++#define AVCS_CMD_SHARED_MEM_UNMAP_REGIONS	0x00012926
++#define AVCS_CMD_DEREGISTER_TOPOLOGIES		0x0001292a
++#define AVCS_MODE_DEREGISTER_ALL_CUSTOM_TOPOLOGIES	2
++#define ADSP_MEMORY_MAP_SHMEM8_4K_POOL		3
+ 
+ struct avcs_svc_info {
+ 	uint32_t service_id;
+@@ -63,6 +71,9 @@ struct q6core {
+ 	bool get_state_supported;
+ 	bool get_version_supported;
+ 	bool is_version_requested;
++	bool topologies_ready;
++	u32 cmd_status;
++	u32 mem_handle;
+ };
+ 
+ static struct q6core *g_core;
+@@ -93,6 +104,13 @@ static int q6core_callback(struct apr_device *adev, struct apr_resp_pkt *data)
+ 				core->get_state_supported = false;
+ 			core->resp_received = true;
+ 			break;
++		case AVCS_CMD_REGISTER_TOPOLOGIES:
++		case AVCS_CMD_DEREGISTER_TOPOLOGIES:
++		case AVCS_CMD_SHARED_MEM_MAP_REGIONS:
++		case AVCS_CMD_SHARED_MEM_UNMAP_REGIONS:
++			core->cmd_status = result->status;
++			core->resp_received = true;
++			break;
+ 		}
+ 		break;
+ 	}
+@@ -130,6 +148,11 @@ static int q6core_callback(struct apr_device *adev, struct apr_resp_pkt *data)
+ 
+ 		break;
+ 	}
++	case AVCS_CMDRSP_SHARED_MEM_MAP_REGIONS:
++		core->mem_handle = *(u32 *)data->payload;
++		core->cmd_status = 0;
++		core->resp_received = true;
++		break;
+ 	case AVCS_CMDRSP_ADSP_EVENT_GET_STATE:
+ 		core->get_state_supported = true;
+ 		core->avcs_state = result->opcode;
+@@ -325,6 +348,99 @@ bool q6core_is_adsp_ready(void)
+ }
+ EXPORT_SYMBOL_GPL(q6core_is_adsp_ready);
+ 
++static int q6core_avcs_cmd(struct q6core *core, void *pkt, int size, u32 opcode)
++{
++	struct apr_hdr *hdr = pkt;
++	int rc;
++
++	hdr->hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
++	hdr->pkt_size = size;
++	hdr->opcode = opcode;
++	core->resp_received = false;
++	core->cmd_status = 0;
++	rc = apr_send_pkt(core->adev, pkt);
++	if (rc < 0)
++		return rc;
++	if (!wait_event_timeout(core->wait, core->resp_received, msecs_to_jiffies(1000)))
++		return -ETIMEDOUT;
++	return core->cmd_status ? -EIO : 0;
++}
++
++/**
++ * q6core_register_custom_topologies() - register a device's own processing topologies
++ *
++ * @dma_dev: device whose IOMMU context the DSP can read (its "iommus" stream ID is passed to the DSP)
++ * @data: the topology definitions (AVCS_CMD_REGISTER_TOPOLOGIES payload, version 3 records)
++ * @size: their size in bytes
++ *
++ * Replaces any custom topologies registered before. The DSP copies the definitions, so the buffer is released
++ * again before returning. Return: 0 on success.
++ */
++int q6core_register_custom_topologies(struct device *dma_dev, const void *data, size_t size)
++{
++	struct { struct apr_hdr hdr; u32 lsw, msw, handle, size, mode; } __packed dereg = { };
++	struct { struct apr_hdr hdr; u16 pool, num; u32 flags; u32 lsw, msw, size; } __packed map = { };
++	struct { struct apr_hdr hdr; u32 lsw, msw, handle, size; } __packed reg = { };
++	struct { struct apr_hdr hdr; u32 handle; } __packed unmap = { };
++	struct of_phandle_args args;
++	size_t len = PAGE_ALIGN(size);
++	dma_addr_t iova;
++	u32 sid = 0;
++	void *buf;
++	int rc;
++
++	if (!g_core)
++		return -ENODEV;
++	/* the DSP picks the SMMU context from the stream ID in the upper address bits */
++	if (!of_parse_phandle_with_fixed_args(dma_dev->of_node, "iommus", 1, 0, &args)) {
++		sid = args.args[0] & 0xf;
++		of_node_put(args.np);
++	}
++	buf = dma_alloc_coherent(dma_dev, len, &iova, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	memcpy(buf, data, size);
++
++	mutex_lock(&g_core->lock);
++	g_core->topologies_ready = false;
++	dereg.mode = AVCS_MODE_DEREGISTER_ALL_CUSTOM_TOPOLOGIES;
++	q6core_avcs_cmd(g_core, &dereg, sizeof(dereg), AVCS_CMD_DEREGISTER_TOPOLOGIES);
++
++	map.pool = ADSP_MEMORY_MAP_SHMEM8_4K_POOL;
++	map.num = 1;
++	map.lsw = lower_32_bits(iova);
++	map.msw = upper_32_bits(iova) | sid;
++	map.size = len;
++	rc = q6core_avcs_cmd(g_core, &map, sizeof(map), AVCS_CMD_SHARED_MEM_MAP_REGIONS);
++	if (!rc) {
++		reg.lsw = map.lsw;
++		reg.msw = map.msw;
++		reg.handle = g_core->mem_handle;
++		reg.size = size;
++		rc = q6core_avcs_cmd(g_core, &reg, sizeof(reg), AVCS_CMD_REGISTER_TOPOLOGIES);
++		unmap.handle = g_core->mem_handle;
++		q6core_avcs_cmd(g_core, &unmap, sizeof(unmap), AVCS_CMD_SHARED_MEM_UNMAP_REGIONS);
++	}
++	g_core->topologies_ready = !rc;
++	mutex_unlock(&g_core->lock);
++
++	dma_free_coherent(dma_dev, len, buf, iova);
++	dev_info(&g_core->adev->dev, "custom topologies (%zu bytes): %d\n", size, rc);
++	return rc;
++}
++EXPORT_SYMBOL_GPL(q6core_register_custom_topologies);
++
++/**
++ * q6core_custom_topologies_ready() - custom topologies are registered with the running DSP
++ *
++ * Return: true after q6core_register_custom_topologies() succeeded (false again after a DSP restart).
++ */
++bool q6core_custom_topologies_ready(void)
++{
++	return g_core && g_core->topologies_ready;
++}
++EXPORT_SYMBOL_GPL(q6core_custom_topologies_ready);
++
+ static int q6core_probe(struct apr_device *adev)
+ {
+ 	g_core = kzalloc(sizeof(*g_core), GFP_KERNEL);
+diff --git a/sound/soc/qcom/qdsp6/q6core.h b/sound/soc/qcom/qdsp6/q6core.h
+index 4105b1d73..5faf66471 100644
+--- a/sound/soc/qcom/qdsp6/q6core.h
++++ b/sound/soc/qcom/qdsp6/q6core.h
+@@ -11,5 +11,7 @@ struct q6core_svc_api_info {
+ 
+ bool q6core_is_adsp_ready(void);
+ int q6core_get_svc_api_info(int svc_id, struct q6core_svc_api_info *ainfo);
++int q6core_register_custom_topologies(struct device *dma_dev, const void *data, size_t size);
++bool q6core_custom_topologies_ready(void);
+ 
+ #endif /* __Q6CORE_H__ */

@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Tue, 6 Jan 2026 03:01:19 +0200
+Subject: [PATCH] arm64: dts: qcom: sm8150: add uart13
+
+Add UART13, typically used for Bluetooth connection on SM8150.
+
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150.dtsi b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+index e3ec99972..24c169164 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+@@ -1693,6 +1693,15 @@ spi13: spi@c8c000 {
+ 				status = "disabled";
+ 			};
+ 
++			uart13: serial@c8c000 {
++				compatible = "qcom,geni-uart";
++				reg = <0 0x00c8c000 0 0x4000>;
++				clocks = <&gcc GCC_QUPV3_WRAP2_S3_CLK>;
++				clock-names = "se";
++				interrupts = <GIC_SPI 585 IRQ_TYPE_LEVEL_HIGH>;
++				status = "disabled";
++			};
++
+ 			i2c14: i2c@c90000 {
+ 				compatible = "qcom,geni-i2c";
+ 				reg = <0 0x00c90000 0 0x4000>;

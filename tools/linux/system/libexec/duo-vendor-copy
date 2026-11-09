@@ -1,0 +1,33 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copy the files our drivers use from the phone's Android vendor_a (inside super) into /var/lib/duo/vendor-fw, so the
+# phone keeps working once Android is deleted (Debian-only install, docs/research/workbench/installer.md step 6).
+# Made ON the phone from its own partitions - never shipped. ~16 MB:
+#   firmware/       GPU (a630_sqe, a640_gmu, a640_zap.*), IPA (mobile data) firmware
+#   etc/acdbdata/   the audio calibration database (speaker DSP tuning: duo-speaker-tuning)
+#   etc/sensors/    the sensor DSP configs (hexagonrpcd root: duo-sensors)
+#   lib/rfsa/       DSP-side libraries the sensor/compute DSPs load through hexagonrpcd
+#   dsp/            empty: the mount point for the dsp partition (kept)
+# modem_a, persist, dsp and the other firmware partitions are not Android and stay on the phone.
+# usage: duo-vendor-copy [target root, default /]   (the installer runs it with the new Debian root mounted)
+# duo-lib.sh: the installed one, else the one next to this script (the phone-side installer runs it from its payload)
+DUO_NAME=duo-vendor-copy; D=/usr/libexec/duo; [ -f $D/duo-lib.sh ] || D=$(dirname "$0"); . $D/duo-lib.sh
+ROOT=${1:-}; T=$ROOT$VENDOR_COPY
+V=/run/duo-vendor-src; mkdir -p $V
+S=$(part super); [ -n "$S" ] || { log "no super partition (Android already gone?) - nothing to copy"; exit 1; }
+mountpoint -q $V || { L=$(losetup -f) && losetup -r -o $((11369472 * 512)) $L /dev/$S && mount -t ext4 -o ro $L $V; } || { log "cannot mount vendor_a"; exit 1; }
+for d in firmware etc/acdbdata etc/sensors lib/rfsa; do [ -d $V/$d ] || { log "vendor_a has no $d"; umount $V; exit 1; }; done
+rm -rf $T.new; mkdir -p $T.new/etc $T.new/lib $T.new/dsp
+cp -a $V/firmware $T.new/ && cp -a $V/etc/acdbdata $V/etc/sensors $T.new/etc/ && cp -a $V/lib/rfsa $T.new/lib/ || { log "copy failed"; umount $V; exit 1; }
+cp -a $V/build.prop $T.new/ 2>/dev/null
+# verify against the source (file counts + total bytes per tree) while it is still mounted, then swap in
+bad=0
+for d in firmware etc/acdbdata etc/sensors lib/rfsa; do
+	a="$(find $V/$d -type f | wc -l) $(du -sb $V/$d | cut -f1)"; b="$(find $T.new/$d -type f | wc -l) $(du -sb $T.new/$d | cut -f1)"
+	[ "$a" = "$b" ] || { log "MISMATCH $d: vendor_a $a, copy $b"; bad=1; }
+done
+SRC=$(findmnt -n -o SOURCE $V); umount $V; case "$SRC" in /dev/loop*) losetup -d $SRC 2>/dev/null ;; esac
+[ $bad = 0 ] || { rm -rf $T.new; exit 1; }
+log "copied $(du -sh $T.new | cut -f1) ($(find $T.new -type f | wc -l) files), verified"
+rm -rf $T.old; [ -d $T ] && mv $T $T.old; mv $T.new $T && rm -rf $T.old
+log "vendor files saved in $T"

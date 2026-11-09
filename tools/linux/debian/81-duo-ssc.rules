@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo (Debian): the SLPI sensors via hexagonrpcd + libssc for iio-sensor-proxy (duo-sensors service starts the
+# DSP side). On the FastRPC devices, as on pmOS; ACCEL_MOUNT_MATRIX = X and Y negated (upright read "bottom-up" without it).
+SUBSYSTEM=="misc", KERNEL=="fastrpc-*", ENV{IIO_SENSOR_PROXY_TYPE}="ssc-accel ssc-light ssc-proximity ssc-compass", ENV{ACCEL_MOUNT_MATRIX}="-1, 0, 0; 0, -1, 0; 0, 0, 1"

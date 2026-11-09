@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo hardware watchdog. Our initramfs arms the SoC watchdog (qcom-wdt) and a BRIDGE feeder pets it across
+# switch_root. "start" tells the bridge to stop (writes "stop" into /dev/.duo-wdt-tick), waits until /dev/watchdog is
+# free and then BECOMES the feeder (exec, foreground: systemd Type=simple / OpenRC command_background), duo-wdt-feeder,
+# with the RAM workbench's health checks: petting stops - and the watchdog resets the phone to the fastboot menu,
+# where the PC watcher boots the workbench again - when a UFS read hangs, usb0's rx counter stops for 60 s after it
+# moved once, or our sshd banner stops answering for 60 s after it answered once. Never writes the magic 'V' (closing
+# must not disarm), so a feeder that dies = a reset: the init system must NOT restart it into a second opener.
+# usage: duo-watchdog start        (off: duo.nowdt=1)
+DUO_NAME=duo-watchdog; . /usr/libexec/duo/duo-lib.sh
+case "$1" in
+start)
+	grep -q 'duo.nowdt=1' /proc/cmdline && { log "duo.nowdt=1: watchdog not taken over"; exit 0; }
+	F=/usr/libexec/duo/duo-wdt-feeder; [ -x $F ] || F=/usr/local/sbin/duo-wdt-feeder
+	[ -x $F ] || { log "no duo-wdt-feeder - leaving the bridge feeder running"; exit 1; }
+	[ -p /dev/.duo-wdt-tick ] && { echo stop > /dev/.duo-wdt-tick & sleep 1; }   # bridge exits within ~5 s
+	for i in 1 2 3 4 5 6 7 8; do fuser /dev/watchdog > /dev/null 2>&1 || break; sleep 1; done
+	exec $F ;;
+*)	echo "usage: $0 start"; exit 1 ;;
+esac

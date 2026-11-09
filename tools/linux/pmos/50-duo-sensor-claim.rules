@@ -1,0 +1,7 @@
+// Surface Duo (2026-11-07): let members of 'video' claim iio-sensor-proxy sensors outside an active session.
+// duo-autofocus.py reads the light sensor to pick the camera frame rate (15 fps in dim light); the stock policy allows
+// claims only from the ACTIVE session, which a helper started by su/an autostart race may not be.
+polkit.addRule(function(action, subject) {
+    if (action.id == "net.hadess.SensorProxy.claim-sensor" && subject.isInGroup("video"))
+        return polkit.Result.YES;
+});

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 18:34:33 -0500
+Subject: [PATCH] arm64: configs: duo.config: build the IPA driver
+
+Mobile data on the Surface Duo goes through IPA v4.1. A module, so it can be loaded before the
+modem is started (the order Android uses).
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ arch/arm64/configs/duo.config | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/configs/duo.config b/arch/arm64/configs/duo.config
+index 5156b55db..7fd653ecd 100644
+--- a/arch/arm64/configs/duo.config
++++ b/arch/arm64/configs/duo.config
+@@ -494,3 +494,5 @@ CONFIG_PROC_EVENTS=y
+ CONFIG_KPROBES=y
+ CONFIG_KPROBE_EVENTS=y
+ CONFIG_INET_UDP_DIAG=y
++# Mobile data: the IPA v4.1 modem data path (module, loaded before the modem starts)
++CONFIG_QCOM_IPA=m

@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 15:38:00 -0500
+Subject: [PATCH] clk: qcom: dispcc-sm8250: enable the parent PLL while
+ configuring the pixel clocks
+
+On SM8150 (Surface Duo) every boot warns twice during display probe:
+
+  disp_cc_mdss_pclk0_clk_src: rcg didn't update its configuration.
+  disp_cc_mdss_pclk1_clk_src: rcg didn't update its configuration.
+
+The pixel clock sources are reconfigured while their parent, the DSI PHY
+PLL, is not running yet, so the RCG never latches the new configuration.
+Set CLK_OPS_PARENT_ENABLE on both, as the qcm2290, sm6115, sm6350, sm6375,
+sm7150 and sm8750 display clock controllers already do.
+
+This patch was written by Claude (Anthropic's AI assistant) under the
+direction of Bryson, who tested it on his Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/clk/qcom/dispcc-sm8250.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/qcom/dispcc-sm8250.c b/drivers/clk/qcom/dispcc-sm8250.c
+index 8f433e1e7..d021cf2f2 100644
+--- a/drivers/clk/qcom/dispcc-sm8250.c
++++ b/drivers/clk/qcom/dispcc-sm8250.c
+@@ -578,7 +578,7 @@ static struct clk_rcg2 disp_cc_mdss_pclk0_clk_src = {
+ 		.name = "disp_cc_mdss_pclk0_clk_src",
+ 		.parent_data = disp_cc_parent_data_6,
+ 		.num_parents = ARRAY_SIZE(disp_cc_parent_data_6),
+-		.flags = CLK_SET_RATE_PARENT,
++		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+ 		.ops = &clk_pixel_ops,
+ 	},
+ };
+@@ -592,7 +592,7 @@ static struct clk_rcg2 disp_cc_mdss_pclk1_clk_src = {
+ 		.name = "disp_cc_mdss_pclk1_clk_src",
+ 		.parent_data = disp_cc_parent_data_6,
+ 		.num_parents = ARRAY_SIZE(disp_cc_parent_data_6),
+-		.flags = CLK_SET_RATE_PARENT,
++		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+ 		.ops = &clk_pixel_ops,
+ 	},
+ };

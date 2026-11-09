@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo MTP share: the phone under "This PC" like a thumb drive (Downloads + Pictures), as an extra FunctionFS
+# function of our USB gadget (the gadget logic: /usr/libexec/duo/duo-mtp-gadget). Needs umtprd (Debian: umtp-responder,
+# /usr/bin/umtprd; elsewhere /usr/local/sbin/umtprd). The USB link drops for ~2 s while the gadget rebinds.
+# usage: duo-mtp start|stop
+DUO_NAME=duo-mtp; . /usr/libexec/duo/duo-lib.sh
+case "$1" in
+start)
+	command -v umtprd > /dev/null || [ -x /usr/local/sbin/umtprd ] || { log "no umtprd"; exit 1; }
+	mkdir -p /home/user/Downloads /home/user/Pictures
+	setsid sh /usr/libexec/duo/duo-mtp-gadget > /var/log/duo-mtp.log 2>&1 < /dev/null &
+	log "MTP share starting" ;;
+stop)
+	sh /usr/libexec/duo/duo-mtp-gadget off > /var/log/duo-mtp.log 2>&1 ;;
+*)	echo "usage: $0 start|stop"; exit 1 ;;
+esac

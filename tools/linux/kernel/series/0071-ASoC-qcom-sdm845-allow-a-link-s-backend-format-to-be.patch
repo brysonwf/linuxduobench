@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 22:22:59 -0500
+Subject: [PATCH] ASoC: qcom: sdm845: allow a link's backend format to be set
+ in the DT
+
+The backend fixup forces every link to two channels, 16 bit. Some speakers are tuned for another
+format: the Surface Duo's mono speaker chain addresses one channel, and the stereo layout made it sound
+grainy. Read "qcom,channels" and "qcom,bits-per-sample" (16 or 24) from the dai-link node; links
+without them keep the old format.
+
+The format must not change while the system runs: on SM8150 switching a SLIMbus port between 16 and
+24 bit makes the next port start fail, or crashes the DSP when speaker protection is on.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ sound/soc/qcom/sdm845.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/sound/soc/qcom/sdm845.c b/sound/soc/qcom/sdm845.c
+index 0ce9dff4d..869f8063f 100644
+--- a/sound/soc/qcom/sdm845.c
++++ b/sound/soc/qcom/sdm845.c
+@@ -40,6 +40,9 @@ struct sdm845_snd_data {
+ 	uint32_t pri_mi2s_clk_count;
+ 	uint32_t sec_mi2s_clk_count;
+ 	uint32_t quat_tdm_clk_count;
++	/* per dai link: backend channels / bits per sample from the DT (0 = default) */
++	u32 *be_channels;
++	u32 *be_bits;
+ };
+ 
+ static struct snd_soc_jack_pin sdm845_jack_pins[] = {
+@@ -501,11 +504,22 @@ static int sdm845_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 	struct snd_interval *channels = hw_param_interval(params,
+ 					SNDRV_PCM_HW_PARAM_CHANNELS);
+ 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
++	struct sdm845_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
++	int i = rtd->dai_link - rtd->card->dai_link;
+ 
+ 	rate->min = rate->max = DEFAULT_SAMPLE_RATE_48K;
+ 	channels->min = channels->max = 2;
+ 	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
+ 
++	if (!data->be_channels || i < 0 || i >= rtd->card->num_links)
++		return 0;
++	if (data->be_channels[i])
++		channels->min = channels->max = data->be_channels[i];
++	if (data->be_bits[i] == 24) {
++		snd_mask_none(fmt);
++		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -567,6 +581,23 @@ static int sdm845_snd_platform_probe(struct platform_device *pdev)
+ 	data->card = card;
+ 	snd_soc_card_set_drvdata(card, data);
+ 
++	/* same order as qcom_snd_parse_of(): one entry per available link node */
++	data->be_channels = devm_kcalloc(dev, card->num_links, sizeof(u32), GFP_KERNEL);
++	data->be_bits = devm_kcalloc(dev, card->num_links, sizeof(u32), GFP_KERNEL);
++	if (data->be_channels && data->be_bits) {
++		int i = 0;
++
++		for_each_available_child_of_node_scoped(dev->of_node, np) {
++			if (i >= card->num_links)
++				break;
++			of_property_read_u32(np, "qcom,channels", &data->be_channels[i]);
++			of_property_read_u32(np, "qcom,bits-per-sample", &data->be_bits[i]);
++			i++;
++		}
++	} else {
++		data->be_channels = NULL;
++	}
++
+ 	sdm845_add_ops(card);
+ 	return devm_snd_soc_register_card(dev, card);
+ }

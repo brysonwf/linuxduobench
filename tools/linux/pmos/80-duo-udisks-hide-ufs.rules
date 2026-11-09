@@ -1,0 +1,7 @@
+# Surface Duo: hide the phone's internal UFS partitions (modem firmware, ESP, boot slots, dsp, the OS roots ...) from
+# udisks, so the file manager's "Computer" view does not offer to mount/format them (2026-11-06: pcmanfm-qt listed
+# every one as "SAMSUNG KLUDG4UHDB-B2D1 ..."). External USB drives still appear (they are not under the UFS host).
+SUBSYSTEM=="block", DEVPATH=="*1d84000.ufshc*", ENV{UDISKS_IGNORE}="1"
+# loops onto UFS partitions (the read-only vendor/system mounts out of super) and Waydroid's images: not user drives
+SUBSYSTEM=="block", KERNEL=="loop*", ATTR{loop/backing_file}=="/dev/sd*", ENV{UDISKS_IGNORE}="1"
+SUBSYSTEM=="block", KERNEL=="loop*", ATTR{loop/backing_file}=="/var/lib/waydroid/*", ENV{UDISKS_IGNORE}="1"

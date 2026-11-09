@@ -1,0 +1,32 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo charger: the PM8150B SMB5 charger (our qcom_smbx module) ALWAYS paired with the battery temperature guard
+# (duo-charger-guard: the two bq27742 gauges, input suspended outside 0..45 C, Microsoft's sw-JEITA + step profile,
+# thermal mitigation, charge limit, 95 % auto-recharge). Rule: never the charger without the guard - if the guard does
+# not come up, the module is unloaded again (no charging). Off: duo.nocharge=1 on the kernel command line.
+# Distribution-neutral (docs/research/workbench/generic-layout.md): any init calls `duo-charger start|stop`.
+P=/run/duo-charger-guard.pid
+G=$(for g in /usr/libexec/duo/duo-charger-guard /usr/local/sbin/duo-charger-guard.sh; do [ -x $g ] && echo $g && break; done)
+M=/lib/duo; [ -d /lib/duo/$(uname -r) ] && M=/lib/duo/$(uname -r)     # per-kernel module set
+log() { echo "duo-charger: $*"; echo "duo-charger: $*" > /dev/kmsg 2>/dev/null; }
+
+case "$1" in
+start)
+	grep -q 'duo.nocharge=1' /proc/cmdline && { log "duo.nocharge=1: charger off"; exit 0; }
+	[ -e /proc/device-tree/soc@0/spmi@c440000/pmic@2/charger@1000 ] || { log "no charger node in the DT"; exit 0; }
+	[ -f $M/qcom_smbx.ko ] && [ -n "$G" ] || { log "qcom_smbx.ko or the guard missing"; exit 1; }
+	grep -q '^qcom_smbx ' /proc/modules || insmod $M/qcom_smbx.ko || { log "insmod failed"; exit 1; }
+	nohup "$G" 10 > /dev/null 2>&1 < /dev/null &
+	echo $! > $P
+	sleep 2
+	if ! kill -0 "$(cat $P)" 2>/dev/null; then
+		rmmod qcom_smbx 2>/dev/null; log "guard did not start: charger unloaded (no charging)"; exit 1
+	fi
+	log "charger + temperature guard running (pid $(cat $P))" ;;
+stop)
+	rmmod qcom_smbx 2>/dev/null          # charger first: never leave it charging without the guard
+	[ -s $P ] && kill "$(cat $P)" 2>/dev/null; rm -f $P
+	log "charger off" ;;
+*)
+	echo "usage: $0 start|stop"; exit 1 ;;
+esac

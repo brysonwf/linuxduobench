@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo sensors: SLPI sensor DSP + hexagonrpcd (for iio-sensor-proxy with libssc)
+[Unit]
+Description=Surface Duo sensor DSP (SLPI) + hexagonrpcd
+After=duo-modem.service
+Wants=duo-modem.service
+Before=iio-sensor-proxy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-sensors start
+ExecStop=/usr/libexec/duo/duo-sensors stop
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

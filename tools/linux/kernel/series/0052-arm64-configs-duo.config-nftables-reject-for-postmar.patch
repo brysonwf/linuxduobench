@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 13:07:13 -0500
+Subject: [PATCH] arm64: configs: duo.config: nftables reject for
+ postmarketOS's default firewall
+
+postmarketOS enables an nftables firewall (postmarketos-base-nftables: input policy drop, SSH + USB allowed). Its
+ruleset has one 'reject with icmpx' rule; without CONFIG_NFT_REJECT 'nft -f' fails on that line, the whole ruleset is
+rejected and the phone runs with NO packet filter (found 2026-11-07: service stopped, 0 rules).
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ arch/arm64/configs/duo.config | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/duo.config b/arch/arm64/configs/duo.config
+index e003ff4f8..f116bd42b 100644
+--- a/arch/arm64/configs/duo.config
++++ b/arch/arm64/configs/duo.config
+@@ -208,7 +208,7 @@ CONFIG_NFT_NAT=y
+ # CONFIG_NFT_OSF is not set
+ # CONFIG_NFT_QUOTA is not set
+ # CONFIG_NFT_REDIR is not set
+-# CONFIG_NFT_REJECT is not set
++CONFIG_NFT_REJECT=y
+ # CONFIG_NFT_SOCKET is not set
+ # CONFIG_NFT_SYNPROXY is not set
+ # CONFIG_NFT_TPROXY is not set

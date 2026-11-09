@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:43 -0500
+Subject: [PATCH] drm/msm/dsi: let a panel turn off command-mode MDP burst
+
+DSI 6G v1.3+ always sets CMD_MODE_MDP_CTRL2.BURST_MODE. The Surface Duo's LG panels show a garbled or black picture
+with it (Microsoft's kernel and UEFI leave it off). Add MIPI_DSI_MODE_NO_CMD_BURST: when the panel sets it the host
+clears BURST_MODE.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/dsi/dsi_host.c | 5 ++++-
+ include/drm/drm_mipi_dsi.h         | 2 ++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index 3945aafcc..c140c922d 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -823,8 +823,11 @@ static void dsi_ctrl_enable(struct msm_dsi_host *msm_host,
+ 		if (cfg_hnd->major == MSM_DSI_VER_MAJOR_6G) {
+ 			data = dsi_read(msm_host, REG_DSI_CMD_MODE_MDP_CTRL2);
+ 
+-			if (cfg_hnd->minor >= MSM_DSI_6G_VER_MINOR_V1_3)
++			if (cfg_hnd->minor >= MSM_DSI_6G_VER_MINOR_V1_3 &&
++			    !(msm_host->mode_flags & MIPI_DSI_MODE_NO_CMD_BURST))
+ 				data |= DSI_CMD_MODE_MDP_CTRL2_BURST_MODE;
++			else
++				data &= ~DSI_CMD_MODE_MDP_CTRL2_BURST_MODE;
+ 
+ 			if (msm_dsi_host_is_wide_bus_enabled(&msm_host->base))
+ 				data |= DSI_CMD_MODE_MDP_CTRL2_DATABUS_WIDEN;
+diff --git a/include/drm/drm_mipi_dsi.h b/include/drm/drm_mipi_dsi.h
+index 0ddf1f52c..bfec040a8 100644
+--- a/include/drm/drm_mipi_dsi.h
++++ b/include/drm/drm_mipi_dsi.h
+@@ -140,6 +140,8 @@ struct mipi_dsi_host *of_find_mipi_dsi_host_by_node(struct device_node *node);
+ #define MIPI_DSI_HS_PKT_END_ALIGNED	BIT(12)
+ /* pack all DSC slices for a line into a single packet (backport of upstream) */
+ #define MIPI_DSI_MODE_DSC_ALL_SLICES_IN_PKT	BIT(13)
++/* command mode: the panel needs the host's MDP burst mode off (one burst per line) */
++#define MIPI_DSI_MODE_NO_CMD_BURST	BIT(14)
+ 
+ enum mipi_dsi_pixel_format {
+ 	MIPI_DSI_FMT_RGB888,

@@ -1,0 +1,637 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo mainline test initramfs: USB-serial shell + audio bring-up helpers.
+# Probe mode (kernel cmdline "duo.probe=1"): after ~25 s, write a diagnostic log to the GPT partition
+# named exactly "metadata" (Android FBE metadata; we blank it before every Android boot anyway — the Duo has no logdump) and reboot, so TWRP can read the log back
+# with: dd if=/dev/block/sda3 bs=4096 count=2048 | strings   (look for DUOLOG1)
+# PATH first: a stage-1 ramdisk (abl-stage1) hands over PATH=/bin, and insmod lives in /sbin
+export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
+mkdir -p /dev/pts /sys/kernel/config /sys/kernel/debug; mount -t devpts devpts /dev/pts
+mount -t configfs none /sys/kernel/config; mount -t debugfs none /sys/kernel/debug
+echo "duo-linux init" > /dev/kmsg
+# Our display panel + touch drivers as MODULES (2026-11-06, request: "can we seperate the driver and kernal?"): with
+# DRM_PANEL_MICROSOFT_SURFACE_DUO=m and SPI_HID_DUO=m a driver change is a new .ko in the initramfs, not a new kernel.
+# Loaded first thing (msm waits for the panel); absent files = built-in kernel, nothing to do.
+for m in panel-microsoft-surface-duo spi-hid-duo; do
+  [ -f /lib/duo/$m.ko ] && { e=$(insmod /lib/duo/$m.ko 2>&1) && echo "duo-linux: $m loaded" > /dev/kmsg || echo "duo-linux: $m FAILED: $e" > /dev/kmsg; }
+done
+# ADSP (audio DSP): the kernel tries to start it at ~0.5 s and does not retry. Its firmware is the phone's OWN split
+# firmware on modem_a (image/adsp.mdt + .bNN; DT firmware-name adsp.mdt), which is not reachable that early - so start
+# it here: link modem_a's image/ files (read-only mount; the same links the firmware code below makes) and start it.
+# (Older initramfs builds carried a converted adsp.mbn: then it is already running and nothing happens here.)
+for r in /sys/class/remoteproc/remoteproc*; do
+  [ "$(cat $r/name 2>/dev/null)" = adsp ] && [ "$(cat $r/state 2>/dev/null)" = offline ] || continue
+  FW=/lib/firmware/$(cat $r/firmware)
+  if [ ! -e "$FW" ]; then
+    for i in $(seq 1 40); do M=$(for d in /sys/class/block/sd*; do grep -q '^PARTNAME=modem_a$' $d/uevent 2>/dev/null && echo ${d##*/}; done | head -1)
+      [ -n "$M" ] && [ -b /dev/$M ] && break; sleep 0.25; done
+    mkdir -p /mnt/modem "${FW%/*}"
+    mountpoint -q /mnt/modem || mount -o ro /dev/$M /mnt/modem 2>/dev/null
+    for f in /mnt/modem/image/*; do [ -e "${FW%/*}/${f##*/}" ] || ln -s "$f" "${FW%/*}/${f##*/}"; done
+  fi
+  echo start > $r/state 2>/dev/null && echo "duo-linux: adsp started ($(cat $r/firmware))" > /dev/kmsg || echo "duo-linux: adsp start FAILED ($FW)" > /dev/kmsg
+done
+export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin HOME=/root
+hostname duo; mkdir -p /tmp /run /var/log /var/run; mount -t tmpfs tmpfs /tmp
+printf 'export PATH=%s\nexport PS1="duo:\\w# "\n' "$PATH" > /etc/profile.d/duo.sh 2>/dev/null || true
+
+# INSTALLED SYSTEM (2026-11-05, docs/research/workbench/pmos-boot-plan.md): cmdline duo.root=<GPT partition name>, e.g.
+# duo.root=spare = postmarketOS on sda11. Only the bring-up the installed system cannot do itself runs here, synchronously,
+# then switch_root hands PID 1 to its /sbin/init (OpenRC). Kernel state survives the hand-over (USB gadget, usb0's IP,
+# panels); the initramfs files do not (switch_root deletes them), so nothing started here may exec a program later -
+# the watchdog feeder below uses shell built-ins only (echo, read -t) and keeps running from memory. If the partition
+# cannot be mounted, the normal RAM workbench below starts instead (SSH as always).
+DR=$(sed -n 's/.*duo\.root=\([A-Za-z0-9_-]*\).*/\1/p' /proc/cmdline)
+if [ -n "$DR" ]; then
+  rlog() { echo "duo-linux root: $*" > /dev/kmsg; }
+  # Bootloader menu -> "Recovery mode": ABL boots this same image WITHOUT androidboot.force_normal_boot=1 -> back to
+  # stock Android (/recovery.sh: erase Debian, slot a unbootable, reset -> Microsoft's slot b). Only on an ABL boot
+  # (androidboot.* present - a UEFI/GRUB boot has none of them); duo.abl.recovery=test shows it and changes nothing.
+  RMODE=$(sed -n 's/.*duo\.abl\.recovery=\([a-z]*\).*/\1/p' /proc/cmdline)
+  if [ -f /recovery.sh ] && grep -q 'androidboot.bootloader=' /proc/cmdline &&
+     { [ -n "$RMODE" ] || ! grep -q 'androidboot.force_normal_boot=1' /proc/cmdline; }; then
+    part() { for d in /sys/class/block/sd*; do grep -q "^PARTNAME=$1\$" $d/uevent 2>/dev/null && echo ${d##*/}; done | head -1; }
+    for i in $(seq 1 40); do [ -n "$(part boot_a)" ] && [ -n "$(part userdata)" ] && break; sleep 0.5; done
+    rlog "recovery mode (${RMODE:-real})"; P=$DR; . /recovery.sh; P=
+  fi
+  rlog "handing over to the installed system on PARTNAME=$DR"
+  echo 1 > /proc/sys/kernel/panic_on_oops; echo 1 > /proc/sys/kernel/hung_task_panic 2>/dev/null
+  echo 1 > /proc/sys/kernel/panic_on_rcu_stall 2>/dev/null
+  # UFS power saving = the kernel's choice (since 2026-11-07 all but clock scaling, which broke the link;
+  # docs/research/workbench/storage-ufs.md). duo.ufspm=off = the old all-off settings, for emergencies.
+  U=/sys/bus/platform/devices/1d84000.ufshc
+  if grep -q duo.ufspm=off /proc/cmdline; then
+    for i in $(seq 1 20); do [ -e $U/auto_hibern8 ] && break; sleep 0.5; done
+    for kv in auto_hibern8=0 clkgate_enable=0 clkscale_enable=0 rpm_lvl=0 spm_lvl=0; do echo ${kv#*=} > $U/${kv%%=*} 2>/dev/null; done
+  fi
+  # USB gadget (ACM + NCM) + the PC link addresses, as in the RAM workbench; the installed system's sshd serves them
+  G=/sys/kernel/config/usb_gadget/duo; mkdir -p $G; ( cd $G
+    echo 0x18d1 > idVendor; echo 0x4ee7 > idProduct
+    mkdir -p strings/0x409 configs/c.1/strings/0x409 functions/acm.usb0 functions/ncm.usb0
+    echo "Surface Duo mainline" > strings/0x409/product; echo "duo-linux" > strings/0x409/serialnumber
+    echo "acm+ncm" > configs/c.1/strings/0x409/configuration
+    ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null; ln -s functions/ncm.usb0 configs/c.1/ 2>/dev/null
+    for i in $(seq 1 30); do UDC=$(ls /sys/class/udc 2>/dev/null | head -1); [ -n "$UDC" ] && break; sleep 1; done
+    echo "$UDC" > UDC 2>/dev/null )
+  IF=$(cat $G/functions/ncm.usb0/ifname 2>/dev/null); IF=${IF:-usb0}
+  for i in $(seq 1 20); do [ -e /sys/class/net/$IF ] && break; sleep 0.5; done
+  ip link set lo up; ip link set $IF up; ip addr add 169.254.66.1/16 dev $IF; ip addr add 10.66.0.1/24 dev $IF
+  rlog "usb $IF: $(ip -4 -o addr show dev $IF | awk '{print $4}' | tr '\n' ' ')"
+  # panels: the first-init DSI fix (one blank cycle) + brightness re-send, done now because nothing may run later
+  for i in $(seq 1 80); do [ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" = msmdrmfb ] && break; sleep 0.1; done
+  while [ $(cut -d. -f1 /proc/uptime) -lt 4 ]; do sleep 0.2; done
+  if [ -w /sys/class/graphics/fb0/blank ]; then echo 1 > /sys/class/graphics/fb0/blank; sleep 1; echo 0 > /sys/class/graphics/fb0/blank; sleep 1; fi
+  for b in /sys/class/backlight/*; do [ -w $b/brightness ] || continue; v=$(cat $b/brightness)
+    echo $((v > 1 ? v - 1 : v + 1)) > $b/brightness; echo $v > $b/brightness; done
+  # watchdog: armed here, fed forever by built-ins only (a kernel hang still resets the phone -> fastboot -> the PC
+  # watcher boots the workbench; GRUB's one-shot entry is spent, so that boot is the normal RAM workbench)
+  if ! grep -q 'duo.nowdt=1' /proc/cmdline && [ -e /dev/watchdog ]; then
+    mkfifo /dev/.duo-wdt-tick 2>/dev/null
+    # BRIDGE feeder (2026-11-06). After switch_root this process still resolves paths from the OLD root, where /dev and
+    # /sys were moved away - so it must not open anything by path later: fd 3 = the watchdog, fd 4 = the FIFO (opened
+    # now; its read -t is the 5 s sleep). It pets until the installed system's duo-watchdog service writes "stop" into
+    # /dev/.duo-wdt-tick (same FIFO, seen through the moved devtmpfs), exits (closing fd 3 WITHOUT the magic 'V', so the
+    # watchdog stays armed) and that service takes over with the full health checks (USB rx, sshd, UFS).
+    # (Boots 2-4: a path-based USB check here spun on failing reads, stopped petting ~4 s after the hand-over ->
+    #  "watchdog0: pretimeout event" at 41 s and a half-dead phone.)
+    ( exec 3> /dev/watchdog || exit; exec 4<> /dev/.duo-wdt-tick
+      while :; do echo . >&3; if read -t 5 x <&4 && [ "$x" = stop ]; then exit 0; fi; done ) &
+    rlog "watchdog armed (bridge feeder until duo-watchdog takes over, pid $!)"
+  fi
+  P=$(for d in /sys/class/block/sd*; do grep -q "^PARTNAME=$DR\$" $d/uevent && echo ${d##*/}; done | head -1)
+  for i in $(seq 1 40); do [ -n "$P" ] && [ -b /dev/$P ] && break; sleep 0.5
+    P=$(for d in /sys/class/block/sd*; do grep -q "^PARTNAME=$DR\$" $d/uevent && echo ${d##*/}; done | head -1); done
+  # OPTIONAL disk encryption (2026-11-07): a LUKS partition is unlocked here like postmarketOS's own initramfs does it
+  # (unl0kr on-screen keyboard -> cryptsetup, mapping "root"); the tools come from the extra initrd crypt.gz
+  # (tools/linux/crypt/make-crypt-initrd.sh, loaded by GRUB only for an encrypted install). Unencrypted: nothing here.
+  if [ -n "$P" ] && [ "$(blkid -o value -s TYPE /dev/$P 2>/dev/null)" = crypto_LUKS ]; then
+    if [ -x /sbin/cryptsetup ] && [ -x /usr/bin/unl0kr ]; then
+      rlog "/dev/$P is encrypted: unlock prompt on the screen"
+      udevd -d --resolve-names=never 2>/dev/null; udevadm trigger --type=devices --action=add; udevadm settle -t 10
+      tried=0
+      until cryptsetup status root 2>/dev/null | grep -qwi active; do
+        CRYPTTAB_SOURCE=/dev/$P CRYPTTAB_TRIED=$tried unl0kr | cryptsetup --perf-no_read_workqueue --perf-no_write_workqueue open /dev/$P root -
+        tried=$((tried + 1))
+      done
+      udevadm control --exit 2>/dev/null; P=mapper/root
+      rlog "unlocked after $tried attempt(s)"
+    else rlog "/dev/$P is encrypted but crypt.gz is not loaded (no cryptsetup/unl0kr)"; fi
+  fi
+  mkdir -p /newroot
+  # duo.rootdir=<dir> (2026-11-08): the system lives in a DIRECTORY of the partition (e.g. Debian in /debian on sda10
+  # next to other files): that directory becomes / and the whole partition stays reachable at /mnt/duo-part.
+  RD=$(sed -n 's/.*duo\.rootdir=\([A-Za-z0-9_.-]*\).*/\1/p' /proc/cmdline)
+  if [ -n "$P" ] && [ -n "$RD" ]; then
+    mkdir -p /newpart
+    if mount -o rw /dev/$P /newpart && [ -d /newpart/$RD ] && mount --bind /newpart/$RD /newroot; then
+      mkdir -p /newroot/mnt/duo-part; mount --move /newpart /newroot/mnt/duo-part
+      rlog "root = directory $RD on /dev/$P"
+    else rlog "duo.rootdir=$RD: not found on /dev/$P"; umount /newpart 2>/dev/null; P=; fi
+  fi
+  if [ -n "$P" ] && { [ -n "$RD" ] || mount -o rw /dev/$P /newroot; } && [ -x /newroot/sbin/init ]; then
+    rlog "mounted /dev/$P, switch_root to its /sbin/init"
+    for m in dev proc sys; do mkdir -p /newroot/$m; mount --move /$m /newroot/$m; done
+    exec switch_root /newroot /sbin/init
+  fi
+  rlog "could not mount PARTNAME=$DR (/dev/$P) - starting the RAM workbench instead"
+  # = INSTALLER mode on a stock phone (no Debian in userdata yet): only USB, SSH and the disk tools are needed. Keep the
+  # radios, DSPs, sound and sensors off - the modem started without its file server crashed and took the USB link
+  # with it (2026-11-08). The flags go on a bind-mounted copy of /proc/cmdline (every check below reads that), NOT on
+  # the boot image's real command line: an installed Debian's services read duo.nosound / duo.sensors themselves.
+  echo "$(cat /proc/cmdline) duo.wifi=0 duo.sensors=0 duo.nobt=1 duo.nolpm=1 duo.nocamera=1 duo.novenus=1 duo.nosound=1 duo.nohaptics=1" > /.cmdline-installer
+  mount --bind /.cmdline-installer /proc/cmdline && rlog "installer mode: radios, DSPs, sound, sensors off"
+fi
+
+# Auto-recovery (request 2026-11-03: "add auto reboot mechanics in your workbench until you are sure it will work"):
+# feed the SoC's APSS hardware watchdog (qcom-wdt) from userspace. If the kernel or userspace hangs, feeding stops,
+# the watchdog resets the phone after its timeout (default ~30 s; only if feeding stops — long jobs are fine), and every reset lands on the ABL fastboot menu (the core); the PC-side
+# tools/linux/duo-autoboot.ps1 then RAM-boots the workbench again. Opt out with cmdline "duo.nowdt=1".
+# The feeder also checks health: before each pet it does a 4 KiB O_DIRECT read from the UFS disk, so a storage stall
+# (seen 2026-11-03: shell stuck in sync, busybox watchdog kept feeding, phone never reset) stops the feeding too.
+if ! grep -q 'duo.nowdt=1' /proc/cmdline && [ -e /dev/watchdog ]; then
+  echo 60 > /proc/sys/kernel/watchdog_thresh 2>/dev/null   # (softlockup detector: ~2x this before panic)
+  # RCU stalls (one CPU stuck, seen with the modem/WLAN crash loop) wedge USB/SSH while the UFS health read still
+  # passes, so make them panic too: panic=10 then resets to fastboot and duo-autoboot.ps1 boots us again.
+  echo 1 > /proc/sys/kernel/panic_on_rcu_stall 2>/dev/null
+  echo 1 > /proc/sys/kernel/hung_task_panic 2>/dev/null
+  # An oops in a kernel worker (2026-11-04: the DP error snapshot read the unclocked DP block after an HDMI unplug)
+  # left the SoC wedged with the watchdog still fed; panic instead -> panic=10 -> fastboot -> the PC watcher recovers.
+  echo 1 > /proc/sys/kernel/panic_on_oops 2>/dev/null
+  (
+    exec 3> /dev/watchdog || exit
+    echo "duo-linux watchdog armed ($(cat /sys/class/watchdog/watchdog0/timeout 2>/dev/null) s, health = UFS read)" > /dev/kmsg
+    # USB-alive check (2026-11-03): the WLAN crash loop killed USB while everything else kept running, so the
+    # watchdog stayed fed and the phone never reset. The PC (Windows) sends packets on the NCM link every few
+    # seconds anyway; if usb0's rx counter stops moving for 60 s (after it has moved once), stop petting.
+    RX=/sys/class/net/usb0/statistics/rx_packets; last=-1; still=0; seen=0
+    while :; do
+      [ -b /dev/sda ] && dd if=/dev/sda of=/dev/null bs=4096 count=1 iflag=direct 2>/dev/null
+      if [ -r $RX ] && ! grep -q 'duo.nousbwdt=1' /proc/cmdline; then
+        now=$(cat $RX)
+        if [ "$now" != "$last" ]; then [ "$last" != -1 ] && seen=1; still=0; last=$now; else still=$((still + 5)); fi
+        if [ $seen = 1 ] && [ $still -ge 60 ]; then
+          echo "duo-linux watchdog: no USB traffic for ${still}s - letting the watchdog reset the phone" > /dev/kmsg
+          sleep 3600                           # stop petting; the hardware watchdog fires
+        fi
+      fi
+      # SSH-alive check (2026-11-03 evening): the WLAN crash can freeze sshd + the serial shell while USB packets keep
+      # arriving and this loop keeps running. Every 5 s read our own sshd banner; 60 s without "SSH-" -> stop petting.
+      # Starts counting once sshd has answered once (it comes up a few seconds after boot).
+      if [ -x /usr/sbin/dropbear ] && ! grep -q 'duo.nosshwdt=1' /proc/cmdline; then
+        if timeout 5 nc 127.0.0.1 22 </dev/null 2>/dev/null | head -c 4 | grep -q 'SSH-'; then
+          sshok=1; sshbad=0
+        elif [ "${sshok:-0}" = 1 ]; then
+          sshbad=$(( ${sshbad:-0} + 5 ))
+          if [ $sshbad -ge 60 ]; then
+            echo "duo-linux watchdog: sshd silent for ${sshbad}s - letting the watchdog reset the phone" > /dev/kmsg
+            sleep 3600
+          fi
+        fi
+      fi
+      echo . >&3                               # pet (never "V": closing this fd must not disarm the watchdog)
+      sleep 5
+    done
+  ) &
+fi
+
+# UFS power saving: the kernel's choice. Until 2026-11-07 this zeroed everything (the link wedged: UIC errors, a
+# stalled disk); bisected then: CLOCK SCALING alone breaks the HS-G3 link, the kernel now drops only that
+# (ufs-qcom "no clock scaling on the Surface Duo"). duo.ufspm=off = the old all-off settings, for emergencies.
+(
+  U=/sys/bus/platform/devices/1d84000.ufshc
+  for i in $(seq 1 20); do [ -e $U/auto_hibern8 ] && break; sleep 0.5; done
+  if grep -q duo.ufspm=off /proc/cmdline; then
+    for kv in auto_hibern8=0 clkgate_enable=0 clkscale_enable=0 rpm_lvl=0 spm_lvl=0; do
+      echo ${kv#*=} > $U/${kv%%=*} 2>/dev/null
+    done
+  fi
+  echo "duo-linux ufs pm: hibern8=$(cat $U/auto_hibern8) clkgate=$(cat $U/clkgate_enable) clkscale=$(cat $U/clkscale_enable) rpm=$(cat $U/rpm_lvl) spm=$(cat $U/spm_lvl)" > /dev/kmsg
+) &
+
+# USB gadget: one ACM serial port (shell) on the dwc3 UDC (in the background so probe mode always runs)
+(
+G=/sys/kernel/config/usb_gadget/duo
+mkdir -p $G; cd $G
+echo 0x18d1 > idVendor; echo 0x4ee7 > idProduct
+mkdir -p strings/0x409 configs/c.1/strings/0x409 functions/acm.usb0 functions/ncm.usb0
+echo "Surface Duo mainline" > strings/0x409/product; echo "duo-linux" > strings/0x409/serialnumber
+echo "acm+ncm" > configs/c.1/strings/0x409/configuration
+ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
+ln -s functions/ncm.usb0 configs/c.1/ 2>/dev/null
+for i in $(seq 1 30); do UDC=$(ls /sys/class/udc 2>/dev/null | head -1); [ -n "$UDC" ] && break; sleep 1; done
+echo "$UDC" > UDC 2>/dev/null
+echo "duo-linux usb gadget udc=[$UDC]" > /dev/kmsg
+# USB network (NCM) in its own background job so the serial shell below never waits on it. Addresses:
+#   169.254.66.1/16 — same link-local subnet Windows auto-assigns to the NCM adapter (works with no DHCP)
+#   10.66.0.1/24    — plus udhcpd handing the PC 10.66.0.2 (fallback)
+# SSH: dropbear, key-only root (authorized_keys baked into the initramfs). Every step is logged to the kernel log.
+(
+  log () { echo "duo-linux net: $*" > /dev/kmsg; }
+  IF=$(cat functions/ncm.usb0/ifname 2>/dev/null); IF=${IF:-usb0}
+  for i in $(seq 1 20); do [ -e /sys/class/net/$IF ] && break; sleep 0.5; done
+  log "if=$IF present=$([ -e /sys/class/net/$IF ] && echo y || echo n)"
+  ip link set lo up; ip link set $IF up
+  ip addr add 169.254.66.1/16 dev $IF; ip addr add 10.66.0.1/24 dev $IF
+  log "addrs $(ip -4 -o addr show dev $IF | awk '{print $4}' | tr '\n' ' ')"
+  mkdir -p /var/lib/misc /etc/dropbear; touch /var/lib/misc/udhcpd.leases
+  printf 'start 10.66.0.2\nend 10.66.0.2\ninterface %s\noption subnet 255.255.255.0\nopt lease 864000\n' $IF > /etc/udhcpd.conf
+  ( while true; do udhcpd -f /etc/udhcpd.conf >/dev/null 2>&1; sleep 2; done ) &
+  log "udhcpd started"
+  if [ -x /usr/sbin/dropbear ]; then /usr/sbin/dropbear -R -s -p 22; log "dropbear started"; else log "no dropbear"; fi
+) &
+while true; do setsid sh -c 'exec /bin/sh -l </dev/ttyGS0 >/dev/ttyGS0 2>&1'; sleep 1; done
+) &
+
+to_metadata () { # write file $1 to the GPT partition named exactly "metadata"
+  for b in /sys/class/block/*; do
+    if grep -qx 'PARTNAME=metadata' $b/uevent 2>/dev/null; then
+      dd if="$1" of=/dev/$(basename $b) bs=4096 conv=sync 2>/dev/null && sync
+      echo "duo-linux wrote $1 to $(basename $b)" > /dev/kmsg
+    fi
+  done
+}
+
+# Half-garbled panel (2026-11-04 21:40, docs/research/33): a DSI FIFO error during the first panel init ("dsi_err_worker:
+# status=4", 0xc = + MDP underflow; 3 of 4 boots) leaves one panel showing only its first DSC slice (other half = static).
+# A fb0 blank/unblank cycle re-runs the panel init and fixes it. duo_dsifix repairs when NEW dsi_err lines appeared since
+# its last run; called before + after the splash and at ~19 s. Off: duo.nodsifix=1.
+# 2026-11-04 22:20: the pre-splash call repairs UNCONDITIONALLY - with the repair off, the camera-side panel (DSI0) stayed
+# dark on 4 of 4 boots, also on boots with no DSI error logged, and a brightness re-send did not light it.
+duo_dsifix() {
+  grep -q duo.nodsifix=1 /proc/cmdline && return 0
+  [ -w /sys/class/graphics/fb0/blank ] || return 0
+  mkdir /run/dsifix.lock 2>/dev/null || return 0
+  n=$(dmesg | grep -c dsi_err_worker); seen=$(cat /run/dsifix.seen 2>/dev/null || echo 0)
+  echo "duo-linux: dsifix $1: dsi errors $n, handled $seen" > /dev/kmsg
+  if [ "$n" -gt "$seen" ] || [ "$1" = pre-splash ]; then	# pre-splash: ALWAYS once (the camera-side panel can stay dark with no error logged)
+    echo 1 > /sys/class/graphics/fb0/blank; sleep 1; echo 0 > /sys/class/graphics/fb0/blank; sleep 1
+    for b in /sys/class/backlight/*; do [ -w $b/brightness ] || continue; v=$(cat $b/brightness)
+      echo $((v > 1 ? v - 1 : v + 1)) > $b/brightness; echo $v > $b/brightness; done
+    echo "duo-linux: panels re-initialised (blank cycle, $1; dsi errors $n)" > /dev/kmsg
+    n=$(dmesg | grep -c dsi_err_worker)
+  fi
+  echo $n > /run/dsifix.seen; rmdir /run/dsifix.lock
+}
+
+# Boot splash (2026-11-04, the "fat penguin splash" task; tools/linux/splash): our penguin on both panels for the
+# first seconds of boot, upright in laptop posture (drmfill ppm:, DRMFILL_ROT=1). Off: duo.nosplash=1.
+# 2026-11-07: the approved Linux Duo Bench BOOT ANIMATION (tools/linux/bootanim) replaces it when its art initrd is
+# loaded (initrd=/duo/bootanim.gz: usr/share/duo/bootanim/ + usr/local/bin/duo-bootanim): the headlamp penguin on the
+# camera screen, his light on the keyboard screen; plays the same 10 s window, stops early once /run/duo-boot-done exists.
+BOOTANIM=/usr/share/duo/bootanim
+grep -q duo.nosplash=1 /proc/cmdline || [ ! -f /usr/share/duo/splash.ppm -a ! -f $BOOTANIM/seq.txt ] || (
+  # wait until msm owns the console (fb0 = msmdrmfb, ~3 s): before that the cold second panel is not up yet and stayed
+  # dark under the splash (2026-11-04 test: only the reflection of the other panel showed in its glass)
+  for i in $(seq 1 80); do [ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" = msmdrmfb ] && break; sleep 0.1; done
+  # msm's card: card1 through UEFI (its framebuffer is card0), card0 on the ABL path (2026-11-08)
+  C=/dev/dri/card1; [ -e $C ] || C=/dev/dri/card0; [ -e $C ] || exit 0
+  # the DSI errors land at 1.8-3.4 s (first panel init); check once they are past
+  while [ $(cut -d. -f1 /proc/uptime) -lt 4 ]; do sleep 0.2; done; duo_dsifix pre-splash
+  ( sleep 1.5; for b in /sys/class/backlight/*; do v=$(cat $b/brightness); echo $((v > 1 ? v - 1 : v + 1)) > $b/brightness; echo $v > $b/brightness; done ) &
+  if [ -f $BOOTANIM/seq.txt ] && [ -x /usr/local/bin/duo-bootanim ]; then
+    # hinge angle: the sensors DSP is not up this early -> the art's 90 degree circle (README: fall back to 090)
+    /usr/local/bin/duo-bootanim $BOOTANIM 90 10 > /dev/kmsg 2>&1 || /usr/local/bin/drmfill $C ppm:/usr/share/duo/splash.ppm 10 > /dev/null 2>&1
+    rm -rf $BOOTANIM		# 170 MB of frames in RAM: not needed after the boot
+  else
+    /usr/local/bin/drmfill $C ppm:/usr/share/duo/splash.ppm 10 > /dev/null 2>&1
+  fi
+  sleep 0.5; duo_dsifix post-splash
+) &
+
+# Panel brightness re-send (2026-11-04; docs/research/34): one panel sometimes stays dark although its DSI link carries
+# frames (MISR identical on both links) and sysfs says brightness 327 - the boot-time brightness command did not reach
+# it. Re-writing the backlight lit it at once, so do that here after the display is up (a different value first so
+# the panel really gets a new DCS brightness command), twice to cover late panel bring-up.
+(
+  for t in 4 10; do sleep $t
+    for b in /sys/class/backlight/*; do [ -w $b/brightness ] || continue; v=$(cat $b/brightness)
+      echo $((v > 1 ? v - 1 : v + 1)) > $b/brightness; echo $v > $b/brightness; done
+  done; echo "duo-linux: panel brightness re-sent" > /dev/kmsg
+  duo_dsifix 19s
+) &
+
+# Sound card (2026-11-04): the sdm845 machine driver is a module so new DAI links (e.g. the mic capture link) can be
+# tested by loading it by hand with the kernel log streamed (a built-in probe that hangs leaves no trace).
+# Off: duo.nosound=1 (then `insmod /lib/duo/snd-soc-sdm845.ko` by hand).
+# Power key + volume-down (2026-11-06): pm8941-pwrkey is built in, but its pwrkey/resin devices only appear once the
+# qcom-pon module populates pon@800. Camera flash LED (PM8150L flash module) when the DT enables it (duo-flash-overlay).
+[ -f /lib/duo/qcom-pon.ko ] && insmod /lib/duo/qcom-pon.ko 2>/dev/null && echo "duo-linux: power key (qcom-pon) loaded" > /dev/kmsg
+if [ "$(tr -d '\0' < /proc/device-tree/soc@0/spmi@c440000/pmic@5/led-controller@d300/status 2>/dev/null)" = okay ] &&
+   [ -f /lib/duo/leds-qcom-flash.ko ]; then
+  insmod /lib/duo/led-class-flash.ko 2>/dev/null; insmod /lib/duo/leds-qcom-flash.ko && echo "duo-linux: flash LED loaded" > /dev/kmsg
+fi
+grep -q duo.nosound=1 /proc/cmdline || { [ -f /lib/duo/snd-soc-sdm845.ko ] && { insmod /lib/duo/snd-soc-rt5663.ko 2>/dev/null; insmod /lib/duo/snd-soc-sdm845.ko; } &&
+  echo "duo-linux: sound card driver loaded" > /dev/kmsg; }
+
+# (UFS spm_lvl 5 is set by tools/linux/duo-suspend-try.sh right before a suspend, NOT here: a boot with this set by
+#  init (initramfs #77) never came up on USB, 2026-11-04 14:42 - not isolated yet; docs/research/33 "SUSPEND")
+
+# Haptics (2026-11-04; docs/research/33 "HAPTICS"): the DA7280 driver is a module (built in, it hard-hung the boot
+# twice with the level-low IRQ); with the DT's edge-falling IRQ + 190 Hz it probes and buzzes. Loaded only when the DT
+# node is enabled. Off: duo.nohaptics=1. Test: buzz /dev/input/eventN 300 (the "da7280-haptic" device).
+if ! grep -q duo.nohaptics=1 /proc/cmdline && [ -f /lib/duo/da7280.ko ] &&
+   [ "$(tr -d '\0' < /proc/device-tree/soc@0/geniqup@8c0000/i2c@884000/da7280@4a/status 2>/dev/null)" = okay ]; then
+  insmod /lib/duo/da7280.ko && echo "duo-linux: haptics driver loaded" > /dev/kmsg
+fi
+
+# GPU firmware (2026-11-04; docs/research/33 "GPU"): Adreno 640 needs qcom/a630_sqe.fw + qcom/a640_gmu.bin + the
+# zap shader qcom/a640_zap.mdt (+ .b00-.b02); all come from the phone's OWN vendor_a (dynamic partition inside super,
+# one linear extent at sector 11369472), mapped read-only and linked here - never stored in the repo/initramfs. The
+# GPU loads them on the first open of the DRM device (msm load_gpu retries per open), so linking late is fine.
+(
+  part() { for d in /sys/class/block/sd*; do grep -q "^PARTNAME=$1\$" $d/uevent && echo ${d##*/}; done; }
+  for i in $(seq 1 120); do S=$(part super); [ -n "$S" ] && break; sleep 0.5; done
+  V=/mnt/vendor-fw; mkdir -p $V /lib/firmware/qcom
+  [ -n "$S" ] && L=$(losetup -f) && losetup -r -o $((11369472 * 512)) $L /dev/$S && mount -o ro $L $V || {
+    echo "duo-linux gpu: vendor_a not mapped (super=$S)" > /dev/kmsg; exit 0; }
+  n=0; for f in $V/firmware/a630_sqe.fw $V/firmware/a640_gmu.bin $V/firmware/a640_zap.*; do
+    [ -e "$f" ] || continue; ln -sf "$f" /lib/firmware/qcom/${f##*/}; n=$((n+1)); done
+  echo "duo-linux gpu: $n firmware files linked from vendor_a" > /dev/kmsg
+  # speaker DSP tuning (2026-11-07, docs/research/workbench/adsp-calibration.md): made from the phone's own ACDB on
+  # vendor_a into /lib/firmware/qcom/sm8150/microsoft (RAM); the kernel loads it on the first speaker playback and
+  # plays untuned without it.
+  G=/lib/duo/audio-tuning/duo-speaker-tuning.sh
+  [ -x $G ] && command -v python3 > /dev/null && echo "duo-linux audio: $($G $V 2>&1 | tail -1)" > /dev/kmsg
+) &
+
+# CHARGER (2026-11-04; docs/research/33 "Charger"): PM8150B SMB5 via qcom_smbx (module, tools/linux/patches/smb5),
+# loaded with disable_hw_jeita=1 because the PMIC's own battery thermistor reads a bogus "hot soft limit" and kept it
+# in DISABLE_CHARGE (Microsoft runs software JEITA from the gauges too); then the gauge-based temperature guard
+# (duo-charger-guard.sh: suspend outside 0..45 C) runs for as long as the charger exists. Off: duo.nocharge=1.
+if [ -e /proc/device-tree/soc@0/spmi@c440000/pmic@2/charger@1000 ] && ! grep -q duo.nocharge=1 /proc/cmdline; then
+  # clean kernel (2026-11-07): the DT's qcom,sw-jeita-enable does it and the module param is gone -> plain insmod
+  ( { insmod /lib/duo/qcom_smbx.ko disable_hw_jeita=1 2>/dev/null || insmod /lib/duo/qcom_smbx.ko; } &&
+    echo "duo-linux: charger driver loaded" > /dev/kmsg
+    exec sh /usr/local/bin/duo-charger-guard.sh 10 ) &
+fi
+
+# Wi-Fi (WCN3998 via ath10k_snoc; docs/research/33 "Wi-Fi"). The WLAN firmware runs on the modem DSP, so this brings
+# up MPSS first. Proprietary firmware comes from the phone's OWN modem_a partition (mounted read-only) and never
+# enters the repo or the initramfs. rmtfs runs read-only (-r: the modem's EFS writes are not written back), so the
+# modemst1/modemst2/fsg partitions are never modified. Default-on (off: duo.wifi=0); was opt-in until 2026-11-04.
+# Flags come from the kernel cmdline OR a ONE-SHOT file /duo/oneshot.flags on the ESP, which is read and deleted at
+# boot (2026-11-03): a risky test (e.g. duo.wifi=1) then runs once, and if it wedges the phone the auto-recovery
+# reboot comes up plain instead of looping. Write it with: echo duo.wifi=1 > /mnt/esp/duo/oneshot.flags
+(
+  wlog() { echo "duo-linux wifi: $*" > /dev/kmsg; }
+  part() { for d in /sys/class/block/sd*; do grep -q "^PARTNAME=$1\$" $d/uevent && echo ${d##*/}; done; }
+  # UFS registers its LUNs ~1 s after init starts: wait for modem_a before anything else (it was missing at 0.7 s)
+  for i in $(seq 1 120); do [ -n "$(part modem_a)" ] && break; sleep 0.5; done
+  cp /proc/cmdline /run/duo.flags
+  E=$(part esp); mkdir -p /mnt/esp1
+  if [ -n "$E" ] && mount -t vfat /dev/$E /mnt/esp1 2>/dev/null; then
+    if [ -f /mnt/esp1/duo/oneshot.flags ]; then
+      cat /mnt/esp1/duo/oneshot.flags >> /run/duo.flags; rm -f /mnt/esp1/duo/oneshot.flags; sync
+      echo "duo-linux: one-shot flags: $(tail -1 /run/duo.flags)" > /dev/kmsg
+    fi
+    # Crash logs (2026-11-05): ramoops (DT ramoops@b0000000) keeps the kernel log of a HUNG boot in RAM if the reset
+    # that follows keeps RAM (power-button reset; PS_HOLD is cold and loses it). Save any to the ESP (/duo/pstore/,
+    # a few KB each, newest 5 kept) so the random dark boot hang leaves evidence. Read: ls /duo/pstore on the ESP.
+    mkdir -p /sys/fs/pstore; mountpoint -q /sys/fs/pstore || mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+    if [ -n "$(ls /sys/fs/pstore 2>/dev/null)" ]; then
+      # numbered, not dated: the phone's clock starts at 1970 on every boot
+      mkdir -p /mnt/esp1/duo/pstore
+      last=$(ls /mnt/esp1/duo/pstore | sed 's/-.*//' | sort -n | tail -1)
+      D=/mnt/esp1/duo/pstore/$(printf %06d $((${last:-0} + 1)))-$(cut -c1-8 /proc/sys/kernel/random/boot_id); mkdir -p $D
+      cp /sys/fs/pstore/* $D/ 2>/dev/null; sync
+      ls -d /mnt/esp1/duo/pstore/* | sort > /run/pstore.list; n=$(wc -l < /run/pstore.list)
+      [ "$n" -gt 5 ] && head -n $((n - 5)) /run/pstore.list | xargs rm -rf 2>/dev/null
+      echo "duo-linux: pstore: saved $(ls $D | wc -l) crash logs to /duo/pstore/${D##*/}" > /dev/kmsg
+    fi
+    umount /mnt/esp1
+  fi
+  # Wi-Fi is DEFAULT-ON since 2026-11-04 (initramfs #59): it works, and with modem recovery off a WLAN fw crash
+  # stops the modem once instead of the wedging loop. Turn it off with duo.wifi=0 (cmdline or one-shot flags).
+  grep -q 'duo.wifi=0' /run/duo.flags || echo duo.wifi=1 >> /run/duo.flags
+  # Sensors (SLPI + hexagonrpcd: accel, mag, gyro, hinge angle, posture, hall, light, proximity) DEFAULT-ON since
+  # 2026-11-05 (initramfs #90; re-verified on kernel #79: hinge 95-98 deg, accel Z 10.0). Off: duo.sensors=0.
+  grep -q 'duo.sensors=0' /run/duo.flags || echo duo.sensors=1 >> /run/duo.flags
+  grep -qE 'duo.(wifi|sensors|cdsp)=1' /run/duo.flags || exit 0
+  mkdir -p /dev/disk/by-partlabel
+  for d in /sys/class/block/sd*; do n=$(sed -n 's/^PARTNAME=//p' $d/uevent); [ -n "$n" ] && ln -sf /dev/${d##*/} "/dev/disk/by-partlabel/$n"; done
+  F=/lib/firmware/qcom/sm8150/microsoft; mkdir -p /mnt/modem $F /lib/firmware/ath10k/WCN3990/hw1.0
+  P=$(part modem_a)
+  if [ -n "$P" ] && { mountpoint -q /mnt/modem || mount -o ro /dev/$P /mnt/modem; }; then   # (the ADSP start may have mounted it)
+    for f in /mnt/modem/image/*; do b=${f##*/}; [ -e "$F/$b" ] || ln -s "$f" "$F/$b"; done
+    [ -e /lib/firmware/ath10k/WCN3990/hw1.0/board.bin ] || ln -s /mnt/modem/image/bdwlan.bin /lib/firmware/ath10k/WCN3990/hw1.0/board.bin
+    wlog "firmware linked from $P"
+  else wlog "modem_a not mounted (part=$P)"; fi
+  # Venus video codec (2026-11-04; docs/research/33 "VIDEO CODEC DECODES" + "VIDEO ENCODER WORKS"): the media + venus
+  # modules, loaded after the firmware links (venus.mdt from modem_a) when the DT has the video-codec node.
+  # Off: duo.novenus=1. Test: ffmpeg -c:v h264_v4l2m2m (video overlay) or v4l2q /dev/video0.
+  if ! grep -q duo.novenus=1 /proc/cmdline && [ -e /proc/device-tree/soc@0/video-codec@aa00000 ] && [ -d /lib/duo/venus ]; then
+    for m in mc videodev videobuf2-common videobuf2-v4l2 v4l2-mem2mem videobuf2-memops videobuf2-dma-contig venus-core venus-dec venus-enc; do
+      insmod /lib/duo/venus/$m.ko 2>/dev/null || wlog "venus: insmod $m failed"
+    done
+    wlog "venus: $(ls /dev/video* 2>/dev/null | tr '\n' ' ')"
+  fi
+  # Camera (2026-11-05, docs/research/workbench/camera.md): IMX351 -> CSIPHY1 -> CSID0 -> VFE0 when the DT has the CAMSS
+  # node; imx351 mode=1 = 1920x1080. Off: duo.nocamera=1. libcamera also needs udevd (camera/duo-libcamera-test.sh).
+  if ! grep -q duo.nocamera=1 /proc/cmdline && [ -e /proc/device-tree/soc@0/camss@acb3000 ] && [ -f /lib/duo/camera/imx351.ko ]; then
+    for m in mc videodev videobuf2-common videobuf2-v4l2 videobuf2-memops; do insmod /lib/duo/venus/$m.ko 2>/dev/null; done
+    # dw9719 = the DW9800L autofocus actuator (2026-11-06; needs the DT lens@c + module regulator, test-dtb-cam-af*)
+    for m in v4l2-async v4l2-fwnode v4l2-cci videobuf2-dma-sg camcc-sm8150 i2c-qcom-cci dw9719 imx351 qcom-camss; do
+      [ $m = dw9719 ] && [ ! -f /lib/duo/camera/dw9719.ko ] && continue
+      a=; [ $m = imx351 ] && a=mode=1
+      lsmod | grep -q "^$(echo $m | tr - _) " || insmod /lib/duo/camera/$m.ko $a 2>/dev/null || wlog "camera: insmod $m failed"
+    done
+    wlog "camera: $(ls /dev/media* 2>/dev/null | tr '\n' ' ')"
+  fi
+  if grep -q duo.wifi=1 /run/duo.flags; then
+  # THE Wi-Fi fix (2026-11-04): linux-firmware's generic WCN3990 board-2.bin wins over board.bin (= the phone's own
+  # bdwlan.bin), and with that generic calibration the WLAN firmware died powering up WCSS ("WCSS_WLAN1_GDSCR.PWR_ON").
+  # Drop it (RAM only) so ath10k loads the Duo's board data, like downstream's cnss-daemon. docs/research/33 "Wi-Fi".
+  rm -f /lib/firmware/ath10k/WCN3990/hw1.0/board-2.bin*
+  [ -x /usr/bin/rmtfs ] && { rmtfs -r -P -s > /var/log/rmtfs.log 2>&1 & wlog "rmtfs started (read-only)"; }
+  [ -x /usr/bin/tqftpserv ] && { tqftpserv -d > /var/log/tqftpserv.log 2>&1 & wlog "tqftpserv started"; }
+  for r in /sys/class/remoteproc/remoteproc*; do
+    case "$(cat $r/name 2>/dev/null)" in *4080000*|*mpss*|*modem*)
+      echo disabled > $r/recovery 2>/dev/null   # a WLAN fw crash then stops the modem once instead of a wedging loop
+      [ "$(cat $r/state)" = running ] || echo start > $r/state 2>/dev/null
+      wlog "mpss $(cat $r/name): $(cat $r/state)"
+      # crash limiter: after 2 modem crashes stop recovering (the recover loop wedges USB/SSH)
+      ( for i in $(seq 1 120); do
+          n=$(dmesg | grep -c 'crash detected in modem')
+          if [ "$n" -ge 2 ]; then echo disabled > $r/recovery 2>/dev/null; wlog "modem crashed $n times: recovery off"; break; fi
+          sleep 1
+        done ) &;;
+    esac
+  done
+  # GPS (2026-11-05, docs/research/workbench/modem.md): operating mode LOW-POWER (= airplane) is safe (only 'online'
+  # trips the RF QLink assertion), keeps Wi-Fi working, and lets the GNSS engine track satellites. Then `duo-gps [s]`
+  # (our long-lived LOC client) works right away. Off: duo.nolpm=1.
+  if ! grep -q duo.nolpm=1 /run/duo.flags && command -v qmicli >/dev/null; then
+    ( for i in $(seq 1 30); do
+        timeout 10 qmicli -d qrtr://0 --dms-set-operating-mode=low-power >/dev/null 2>&1 && { wlog "modem: low-power mode (GPS ready)"; break; }
+        sleep 2
+      done ) &
+  fi
+  # The phone's own Wi-Fi MAC (2026-11-04): ath10k says "invalid MAC address; choosing random". Downstream reads
+  # wlan_mac.bin ("Intf0MacAddress=<12 hex>") from persist; read it here (persist mounted read-only, value never
+  # stored in the repo) and set it once wlan0 appears. No file -> keep the random MAC.
+  ( Q=$(part persist); mkdir -p /mnt/persist
+    [ -n "$Q" ] && { mountpoint -q /mnt/persist || mount -o ro /dev/$Q /mnt/persist 2>/dev/null; }
+    M=$(cat /mnt/persist/wlan_mac.bin /mnt/persist/wlan/wlan_mac.bin /mnt/modem/image/wlan_mac.bin 2>/dev/null |
+        sed -n 's/^Intf0MacAddress=\([0-9A-Fa-f]\{12\}\).*/\1/p' | head -1 | sed 's/../&:/g; s/:$//')
+    [ -n "$M" ] || { wlog "no wlan_mac.bin: random MAC"; exit 0; }
+    for i in $(seq 1 90); do [ -e /sys/class/net/wlan0 ] && break; sleep 1; done
+    ip link set wlan0 down 2>/dev/null; ip link set wlan0 address "$M" && wlog "wlan0 MAC from persist wlan_mac.bin"
+  ) &
+  fi   # duo.wifi
+  # Compute DSP (cmdline duo.cdsp=1): start with recovery off; FastRPC then exposes /dev/fastrpc-cdsp.
+  if grep -q duo.cdsp=1 /run/duo.flags; then
+    for r in /sys/class/remoteproc/remoteproc*; do
+      [ "$(cat $r/name 2>/dev/null)" = cdsp ] || continue
+      echo disabled > $r/recovery 2>/dev/null
+      echo start > $r/state 2>/dev/null; wlog "cdsp: $(cat $r/state)"
+    done
+  fi
+  # Sensors (cmdline duo.sensors=1; docs/research/33 "Sensors"): SLPI DSP + hexagonrpcd (serves the DSP its sensor
+  # config/registry from the phone's own vendor + persist partitions, both mounted read-only) + libssc (ssccli).
+  if grep -q duo.sensors=1 /run/duo.flags; then
+    slog() { echo "duo-linux sensors: $*" > /dev/kmsg; }
+    H=/run/hexagon; mkdir -p $H/vendor $H/mnt/vendor/persist
+    Q=$(part persist)
+    # vendor_a is a dynamic partition inside "super" (no GPT entry). Droidian's dm table (2026-11-03):
+    # dynpart-vendor_a = linear, ONE extent, super sector 11369472, 1412144 sectors -> read-only loop at that offset.
+    S=$(part super)
+    if [ -n "$S" ] && L=$(losetup -f) && losetup -r -o $((11369472 * 512)) $L /dev/$S && \
+       mount -t ext4 -o ro $L $H/vendor; then
+      slog "vendor_a mounted ro from super ($S @ sector 11369472 via $L)"
+    else
+      [ -n "$L" ] && losetup -d $L 2>/dev/null
+      # fallback: the phone's own /vendor/etc/sensors, copied to the ESP from Droidian (never in the repo)
+      mkdir -p $H/vendor/etc /mnt/esp; mount -t vfat /dev/$(part esp) /mnt/esp 2>/dev/null
+      [ -d /mnt/esp/duo/sensors-vendor ] && cp -r /mnt/esp/duo/sensors-vendor $H/vendor/etc/sensors && \
+        slog "vendor_a not mapped; using /duo/sensors-vendor copy"
+      umount /mnt/esp 2>/dev/null
+    fi
+    D=$(part dsp_a)
+    [ -n "$D" ] && [ -d $H/vendor/dsp ] && mount -o ro /dev/$D $H/vendor/dsp && slog "dsp_a ($D) mounted ro"
+    [ -n "$Q" ] && mount -o ro /dev/$Q $H/mnt/vendor/persist && slog "persist ($Q) mounted ro"
+    for r in /sys/class/remoteproc/remoteproc*; do
+      [ "$(cat $r/name 2>/dev/null)" = slpi ] || continue
+      echo disabled > $r/recovery 2>/dev/null          # no crash loops while unattended
+      echo start > $r/state 2>/dev/null; slog "slpi: $(cat $r/state)"
+    done
+    # hexagonrpcd's -R root has its own layout (linux-msm/hexagonrpc rpcd_builder.c): dsp/<dsp>/, sensors/config/,
+    # sensors/sns_reg.conf, sensors/registry/ (written to), socinfo/. Build it in RAM; the registry is a tmpfs COPY.
+    # socinfo is mandatory on this firmware (hexagonrpc #23); the Duo's configs match hw_platform "Surface" + soc_id 339.
+    R=/run/hexagon-root; mkdir -p $R/dsp $R/sensors $R/socinfo
+    ln -s $H/vendor/dsp/sdsp $R/dsp/sdsp
+    # light + proximity (TXC PA22A): their configs also require the Android property ro.build.version.release, which
+    # nothing here answers (the DSP then asks a missing "sns_registry" service). RAM copy: that condition -> an
+    # always-true one (soc_id 339), _a12 duplicates dropped. Vendor itself untouched. (2026-11-04: ALS 46 lux.)
+    cp -r $H/vendor/etc/sensors/config $R/sensors/config
+    rm -f $R/sensors/config/surfaceduo_txc_*_a12.json
+    sed -i 's/"ro.build.version.release": *\[ *"11" *\]/"soc_id": [ "339" ]/' $R/sensors/config/surfaceduo_txc_*.json
+    ln -s $H/vendor/etc/sensors/sns_reg_config $R/sensors/sns_reg.conf
+    cp -a $H/mnt/vendor/persist/sensors/registry/registry $R/sensors/registry 2>/dev/null
+    for f in soc_id revision; do cat /sys/devices/soc0/$f > $R/socinfo/$f; done
+    echo Surface > $R/socinfo/hw_platform; echo MP_A > $R/socinfo/platform_subtype   # Droidian /sys/devices/soc0
+    echo 16 > $R/socinfo/platform_subtype_id; echo 65536 > $R/socinfo/platform_version
+    for i in $(seq 1 40); do [ -e /dev/fastrpc-sdsp ] && break; sleep 0.5; done
+    # our own binaries on sda10 (read-only): patched hexagonrpcd (keeps serving after the DSP's sns_registry miss,
+    # tools/linux/build-hexagonrpcd.sh) and ssc-dump (any SSC sensor, e.g. hinge_angle) — linked into /usr/bin (on the
+    # ssh PATH) unless that name already exists there
+    X=$(part linux); HX=/usr/bin/hexagonrpcd
+    if [ -n "$X" ] && mkdir -p /mnt/linux && mount -o ro /dev/$X /mnt/linux 2>/dev/null; then
+      mkdir -p /usr/local/bin
+      for b in /mnt/linux/opt/bin/*; do [ -x "$b" ] && [ ! -e "/usr/bin/${b##*/}" ] && ln -s "$b" /usr/bin/; done
+      [ -x /mnt/linux/opt/bin/hexagonrpcd ] && HX=/mnt/linux/opt/bin/hexagonrpcd
+    fi
+    if [ -x $HX ] && [ -e /dev/fastrpc-sdsp ]; then
+      # the FastRPC compute sessions probe just after the device node appears: an early open fails with EBUSY
+      # ("Resource busy", 2026-11-03), so retry until hexagonrpcd stays up
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        $HX -f /dev/fastrpc-sdsp -d sdsp -s -R $R > /var/log/hexagonrpcd.log 2>&1 &
+        p=$!; sleep 3; kill -0 $p 2>/dev/null && break; sleep 2
+      done
+      slog "hexagonrpcd: $(kill -0 $p 2>/dev/null && echo running || echo FAILED) after $i tries ($HX, root $R)"
+    else slog "no /dev/fastrpc-sdsp or hexagonrpcd"; fi
+  fi
+) &
+
+# Displays (2026-11-03): with msm on, the LEFT panel (DSI1) sometimes stays dark after the boot-time init although its
+# stream is identical to DSI0's; one CRTC off/on cycle (panel unprepare/reset + prepare/init) always brings it up. Do
+# that once here; fbcon redraws afterwards. OPT-IN (duo.kick=1): the 23:31 boot hung hard (no USB, no watchdog reset)
+# right around the kick (CRTC off/on racing fbcon may touch unclocked display registers). docs/research/34.
+( grep -q 'duo.kick=1' /proc/cmdline || exit 0   # opt-in since 23:50: suspected of the 23:31 hard hang
+  for i in $(seq 1 60); do C=$(ls -d /sys/class/drm/card*-DSI-2 2>/dev/null | head -1); [ -n "$C" ] && break; sleep 0.5; done
+  [ -n "$C" ] || exit 0
+  K=${C##*/}; K=/dev/dri/${K%%-*}; sleep 2
+  DRMFILL_CYCLE=1 timeout 15 drmfill $K black 1 > /run/display-kick.log 2>&1
+  echo "duo-linux display: CRTC off/on cycle on $K ($(grep -c 'setcrtc=0' /run/display-kick.log) outputs)" > /dev/kmsg
+) &
+
+# Desktop at boot (2026-11-04, roadmap stage 2 "live desktop"; LOOP.md d): with duo.desktop=1 (cmdline or the one-shot
+# flags file) start the laptop desktop by itself - sway + keyboard + dock - from the Linux partition (sda10 /desktop:
+# overlays + configs, put there by tools/linux/desktop/duo-desktop-install.sh). The logic lives in sda10
+# /desktop/autostart.sh so it can change without a new initramfs. Waits for the splash (10 s) and the msm card.
+(
+  for i in $(seq 1 60); do [ -f /run/duo.flags ] && break; sleep 0.5; done
+  cat /run/duo.flags /proc/cmdline 2>/dev/null | grep -q duo.desktop=1 || exit 0
+  dlog() { echo "duo-linux desktop: $*" > /dev/kmsg; }
+  for i in $(seq 1 60); do [ -e /dev/dri/card1 ] && break; sleep 0.5; done
+  sleep 12                                             # splash (drmfill ppm, 10 s) owns the panels until then
+  X=$(for d in /sys/class/block/sd*; do grep -q "^PARTNAME=linux\$" $d/uevent && echo ${d##*/}; done)
+  mkdir -p /mnt/linux; mountpoint -q /mnt/linux || mount -o ro /dev/$X /mnt/linux 2>/dev/null
+  [ -f /mnt/linux/desktop/autostart.sh ] || { dlog "no /desktop/autostart.sh on the linux partition"; exit 0; }
+  dlog "starting"; sh /mnt/linux/desktop/autostart.sh > /run/desktop-autostart.log 2>&1
+  dlog "autostart exited $? (log /run/desktop-autostart.log)"
+) &
+
+# Bluetooth (WCN3998 on uart13; works since DTB #42). The BD address comes from the DT (local-bd-address; the Duo bootloader
+# fills in none). Here: start
+# D-Bus + bluetoothd so bluetoothctl works. Opt out: duo.nobt=1.
+if ! grep -q 'duo.nobt=1' /proc/cmdline; then (
+  for i in $(seq 1 60); do [ -e /sys/class/bluetooth/hci0 ] && break; sleep 0.5; done
+  [ -e /sys/class/bluetooth/hci0 ] || exit 0
+  sleep 3                                              # let the QCA firmware download finish
+  grep -q ^messagebus /etc/passwd || { echo "messagebus:x:100:101:messagebus:/run/dbus:/sbin/nologin" >> /etc/passwd
+                                       echo "messagebus:x:101:" >> /etc/group; }
+  mkdir -p /run/dbus /var/lib/bluetooth
+  dbus-daemon --system --fork >/dev/null 2>&1
+  /usr/lib/bluetooth/bluetoothd -n > /var/log/bluetoothd.log 2>&1 &
+  echo "duo-linux bt: hci0 address set, bluetoothd started" > /dev/kmsg
+) & fi
+
+# Speaker test (cmdline "duo.audiotest=1"): set the Android speaker path, play a tone, log to metadata.
+# The system stays up afterwards (USB shell available); read the log back from TWRP (sda3, "AUDIOTEST1").
+if grep -q 'duo.audiotest=1' /proc/cmdline; then
+  sleep 20
+  mkdir -p /tmp
+  { echo "AUDIOTEST1"; } > /tmp/audiotest.hdr
+  sh /audiotest.sh /tmp/audiotest.log
+  cat /tmp/audiotest.hdr /tmp/audiotest.log > /tmp/audiotest.all
+  dmesg > /tmp/dmesg.txt; cat /tmp/dmesg.txt >> /tmp/audiotest.all
+  to_metadata /tmp/audiotest.all
+fi
+
+if grep -q 'duo.probe=1' /proc/cmdline; then
+  sleep 25
+  L=/tmp/duolog; mkdir -p /tmp
+  {
+    echo "DUOLOG1 $(date) uptime=$(cut -d' ' -f1 /proc/uptime)"
+    echo "== cmdline"; cat /proc/cmdline
+    echo "== udc"; ls /sys/class/udc
+    echo "== remoteproc"; for r in /sys/class/remoteproc/*; do echo "$r $(cat $r/name 2>/dev/null) $(cat $r/state 2>/dev/null) $(cat $r/firmware 2>/dev/null)"; done
+    echo "== asound"; cat /proc/asound/cards 2>&1
+    echo "== soundwire"; ls -la /sys/bus/soundwire/devices 2>&1
+    echo "== slimbus"; ls /sys/bus/slimbus/devices 2>&1
+    echo "== deferred"; cat /sys/kernel/debug/devices_deferred 2>&1
+    echo "== blocks"; for b in /sys/class/block/*; do echo "$(basename $b) $(grep PARTNAME $b/uevent)"; done
+    echo "== dmesg"; dmesg
+    echo "DUOLOG-END"
+  } > $L 2>&1
+  for b in /sys/class/block/*; do
+    if grep -qx 'PARTNAME=metadata' $b/uevent 2>/dev/null; then
+      dd if=$L of=/dev/$(basename $b) bs=4096 conv=sync 2>/dev/null && sync
+      echo "duo-linux wrote probe log to $(basename $b)" > /dev/kmsg
+    fi
+  done
+  sleep 2
+  reboot -f
+fi
+wait

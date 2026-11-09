@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Mon, 19 Jan 2026 19:08:00 +0200
+Subject: [PATCH] arm64: dts: qcom: sda660-ifc6560: describe WiFi/BT properly
+
+The onboard WiFi / BT device, WCN3990, has a simple on-chip PMU, which
+further spreads generated voltage. Describe the PMU in the device tree.
+
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+ .../boot/dts/qcom/sda660-inforce-ifc6560.dts  | 66 ++++++++++++++++---
+ 1 file changed, 58 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sda660-inforce-ifc6560.dts b/arch/arm64/boot/dts/qcom/sda660-inforce-ifc6560.dts
+index 74cb29cb7..9e14f53b5 100644
+--- a/arch/arm64/boot/dts/qcom/sda660-inforce-ifc6560.dts
++++ b/arch/arm64/boot/dts/qcom/sda660-inforce-ifc6560.dts
+@@ -108,6 +108,43 @@ vreg_l10a_1p8: vreg-l10a-regulator {
+ 		regulator-always-on;
+ 		regulator-boot-on;
+ 	};
++
++	wcn3990-pmu {
++		compatible = "qcom,wcn3990-pmu";
++
++		pinctrl-0 = <&sw_ctrl_default>;
++		pinctrl-names = "default";
++
++		vddio-supply = <&vreg_l13a_1p8>;
++		vddxo-supply = <&vreg_l9a_1p8>;
++		vddrf-supply = <&vreg_l6a_1p3>;
++		vddch0-supply = <&vreg_l19a_3p3>;
++		vddch1-supply = <&vreg_l8b_3p3>;
++
++		swctrl-gpios = <&pm660_gpios 5 GPIO_ACTIVE_HIGH>;
++
++		regulators {
++			vreg_pmu_io: ldo0 {
++				regulator-name = "vreg_pmu_io";
++			};
++
++			vreg_pmu_xo: ldo1 {
++				regulator-name = "vreg_pmu_xo";
++			};
++
++			vreg_pmu_rf: ldo2 {
++				regulator-name = "vreg_pmu_rf";
++			};
++
++			vreg_pmu_ch0: ldo3 {
++				regulator-name = "vreg_pmu_ch0";
++			};
++
++			vreg_pmu_ch1: ldo4 {
++				regulator-name = "vreg_pmu_ch1";
++			};
++		};
++	};
+ };
+ 
+ &adreno_gpu {
+@@ -197,10 +234,10 @@ &blsp2_uart1 {
+ 	bluetooth {
+ 		compatible = "qcom,wcn3990-bt";
+ 
+-		vddio-supply = <&vreg_l13a_1p8>;
+-		vddxo-supply = <&vreg_l9a_1p8>;
+-		vddrf-supply = <&vreg_l6a_1p3>;
+-		vddch0-supply = <&vreg_l19a_3p3>;
++		vddio-supply = <&vreg_pmu_io>;
++		vddxo-supply = <&vreg_pmu_xo>;
++		vddrf-supply = <&vreg_pmu_rf>;
++		vddch0-supply = <&vreg_pmu_ch0>;
+ 		max-speed = <3200000>;
+ 	};
+ };
+@@ -238,6 +275,16 @@ &pon_resin {
+ 	linux,code = <KEY_VOLUMEUP>;
+ };
+ 
++&pm660_gpios {
++	sw_ctrl_default: sw-ctrl-default-state {
++		pins = "gpio5";
++		function = "normal";
++
++		input-enable;
++		bias-pull-down;
++	};
++};
++
+ &qusb2phy0 {
+ 	status = "okay";
+ 
+@@ -503,11 +550,14 @@ &usb3_qmpphy {
+ };
+ 
+ &wifi {
++	/* SoC */
+ 	vdd-0.8-cx-mx-supply = <&vreg_l5a_0p8>;
+-	vdd-1.8-xo-supply = <&vreg_l9a_1p8>;
+-	vdd-1.3-rfa-supply = <&vreg_l6a_1p3>;
+-	vdd-3.3-ch0-supply = <&vreg_l19a_3p3>;
+-	vdd-3.3-ch1-supply = <&vreg_l8b_3p3>;
++
++	/* WiFi / BT PMU */
++	vdd-1.8-xo-supply = <&vreg_pmu_xo>;
++	vdd-1.3-rfa-supply = <&vreg_pmu_rf>;
++	vdd-3.3-ch0-supply = <&vreg_pmu_ch0>;
++	vdd-3.3-ch1-supply = <&vreg_pmu_ch1>;
+ 
+ 	qcom,calibration-variant = "Inforce_IFC6560";
+ 

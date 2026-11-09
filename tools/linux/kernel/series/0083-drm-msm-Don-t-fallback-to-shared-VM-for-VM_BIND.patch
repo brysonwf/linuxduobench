@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Wed, 29 Jul 2026 08:55:52 -0700
+Subject: [PATCH] drm/msm: Don't fallback to shared VM for VM_BIND
+
+If the user wants a userspace managed VM (EN_VM_BIND) don't silently
+fall back to shared VM.
+
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/743110/
+Message-ID: <20260729155609.20190-16-robin.clark@oss.qualcomm.com>
+(cherry picked from commit 3b35a5c528baf3c8cff89b44ae1c5174007b127a)
+---
+ drivers/gpu/drm/msm/msm_drv.c | 3 ++-
+ drivers/gpu/drm/msm/msm_gpu.c | 2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_drv.c b/drivers/gpu/drm/msm/msm_drv.c
+index 9adc2f856..34d3e4515 100644
+--- a/drivers/gpu/drm/msm/msm_drv.c
++++ b/drivers/gpu/drm/msm/msm_drv.c
+@@ -236,7 +236,8 @@ struct drm_gpuvm *msm_context_vm(struct drm_device *dev, struct msm_context *ctx
+ 	if (!ctx->vm) {
+ 		vm = msm_gpu_create_private_vm(
+ 			priv->gpu, current, !ctx->userspace_managed_vm);
+-		smp_store_release(&ctx->vm, vm);
++		if (!IS_ERR_OR_NULL(vm))
++			smp_store_release(&ctx->vm, vm);
+ 	}
+ 
+ 	return ctx->vm;
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 995549d0b..751891be9 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -968,7 +968,7 @@ msm_gpu_create_private_vm(struct msm_gpu *gpu, struct task_struct *task,
+ 			to_msm_vm(vm)->pid = get_pid(task_pid(task));
+ 	}
+ 
+-	if (IS_ERR_OR_NULL(vm))
++	if (IS_ERR_OR_NULL(vm) && kernel_managed)
+ 		vm = drm_gpuvm_get(gpu->vm);
+ 
+ 	return vm;

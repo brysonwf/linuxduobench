@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 15:23:06 -0500
+Subject: [PATCH] arm64: dts: qcom: sm8150-microsoft-surface-duo: leave the
+ Bluetooth address to userspace
+
+A non-zero local-bd-address is applied again on every controller setup, so
+it overwrote the phone's own address that userspace sets from the persist
+partition (btmgmt public-addr triggers a re-setup). Use the all-zero value
+like other Qualcomm phones: the controller stays unconfigured until
+userspace provides the address, which the kernel then keeps.
+
+This patch was written by Claude (Anthropic's AI assistant) under the
+direction of Bryson, who tested it on his Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ .../dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi     | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
+index f404c0798..ce3089795 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
+@@ -229,9 +229,8 @@ &uart13 {
+ 
+ 	bluetooth {
+ 		compatible = "qcom,wcn3998-bt";
+-		/* fixed locally-administered address 02:D0:05:00:00:01 (little-endian); the Duo bootloader fills in none, and
+-		 * without one the controller stays "unconfigured" (2026-11-03) */
+-		local-bd-address = [ 01 00 00 05 d0 02 ];
++		/* the phone's own address is set by userspace from the persist partition (the bootloader fills in none) */
++		local-bd-address = [ 00 00 00 00 00 00 ];
+ 
+ 		vddio-supply = <&vreg_pmu_io>;
+ 		vddxo-supply = <&vreg_pmu_xo>;

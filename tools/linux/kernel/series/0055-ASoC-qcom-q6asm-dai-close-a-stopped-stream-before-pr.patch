@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 15:09:11 -0500
+Subject: [PATCH] ASoC: qcom: q6asm-dai: close a stopped stream before
+ preparing it again
+
+A STOP trigger only sends an EOS and sets the state to STOPPED: the stream stays open on the DSP until close().
+q6asm_dai_prepare() cleared the previous setup only in the RUNNING state, so a prepare after a stop - PipeWire stops
+and re-prepares a capture PCM without closing it - opened the stream again and the DSP refused it with ADSP_EALREADY
+('DSP returned error[9]', 'q6asm_open_read failed') on every retry until the PCM was closed; seen on the Surface Duo
+as a burst of a few hundred failures after a recording ended.
+
+Clear the previous setup whenever the stream is not IDLE, and leave the state IDLE once the DSP stream is closed, so
+IDLE always means 'nothing open on the DSP' (close() already relies on that).
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ sound/soc/qcom/qdsp6/q6asm-dai.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 854ed72c3..fe01f599d 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -224,15 +224,17 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 	}
+ 
+ 	prtd->pcm_count = snd_pcm_lib_period_bytes(substream);
+-	/* rate and channels are sent to audio driver */
+-	if (prtd->state == Q6ASM_STREAM_RUNNING) {
+-		/* clear the previous setup if any  */
++	/*
++	 * Clear the previous setup if any: the stream is open on the DSP in RUNNING and also after a STOP trigger
++	 * (STOPPED - only an EOS was sent). Re-opening it without the close fails with ADSP_EALREADY.
++	 */
++	if (prtd->state != Q6ASM_STREAM_IDLE) {
+ 		q6asm_cmd(prtd->audio_client, prtd->stream_id, CMD_CLOSE);
+ 		q6asm_unmap_memory_regions(substream->stream,
+ 					   prtd->audio_client);
+ 		q6routing_stream_close(soc_prtd->dai_link->id,
+ 					 substream->stream);
+-		prtd->state = Q6ASM_STREAM_STOPPED;
++		prtd->state = Q6ASM_STREAM_IDLE;
+ 	}
+ 
+ 	ret = q6asm_map_memory_regions(substream->stream, prtd->audio_client,
+@@ -308,6 +310,7 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 	q6asm_cmd(prtd->audio_client, prtd->stream_id,  CMD_CLOSE);
+ open_err:
+ 	q6asm_unmap_memory_regions(substream->stream, prtd->audio_client);
++	prtd->state = Q6ASM_STREAM_IDLE;
+ 
+ 	return ret;
+ }

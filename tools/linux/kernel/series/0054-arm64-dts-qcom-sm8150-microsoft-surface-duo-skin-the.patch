@@ -1,0 +1,163 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 15:01:30 -0500
+Subject: [PATCH] arm64: dts: qcom: sm8150-microsoft-surface-duo: skin
+ thermistors and skin temperature limits
+
+Describe the board's skin thermistors (skin-therm on PM8150 AMUX_THM1, msm-therm on PM8150L AMUX_THM2, 100k pull-up,
+as in the phone's own Android device tree) on the ADC-TM5 blocks, and give each Microsoft's skin limits from its
+thermal-engine configuration: CPU (all clusters) and GPU throttling from 47.5 C, an orderly shutdown at 56 C.
+
+Microsoft acts on a weighted mix of both thermistors; trips on each of them act at or before that mix. Tested on the
+phone: the thermistors read between the battery gauges and the SoC sensors (29.6 / 30.8 C at idle) and follow a
+CPU load; with a temporary 38 C trip the CPU and GPU cooling devices stepped in and held msm-therm at 39 C.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ .../sm8150-microsoft-surface-duo-thermal.dtsi | 124 ++++++++++++++++++
+ .../dts/qcom/sm8150-microsoft-surface-duo.dts |   1 +
+ 2 files changed, 125 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-thermal.dtsi
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-thermal.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-thermal.dtsi
+new file mode 100644
+index 000000000..ecdd8f240
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-thermal.dtsi
+@@ -0,0 +1,124 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Surface Duo 1 (board DV_A): the board's skin thermistors and Microsoft's skin-temperature limits.
++ *
++ * Thermistors (the phone's own Android DT, dtbo overlay "Surface Duo DV_A"): skin-therm on PM8150 AMUX_THM1 and
++ * msm-therm on PM8150L AMUX_THM2, both 100k pull-up, ratiometric, 200 us settle - read by the ADC-TM5 blocks, which
++ * interrupt on a trip crossing.
++ * Limits (Microsoft's thermal-engine.conf): its "virtual skin sensor" is a weighted mix of skin-therm and msm-therm
++ * (+ the battery); it throttles CPU + GPU at 47.5 C (clear 44.5 C) and shuts down at 56 C. Here both thermistors get
++ * those trips, so whichever is hotter acts - at or before Microsoft's mix would.
++ */
++#include <dt-bindings/thermal/thermal.h>
++
++/ {
++	thermal-zones {
++		skin-therm-thermal {
++			polling-delay-passive = <1000>;
++			thermal-sensors = <&pm8150_adc_tm 0>;
++
++			trips {
++				skin_alert: trip-alert {
++					temperature = <47500>;
++					hysteresis = <3000>;
++					type = "passive";
++				};
++
++				skin_crit: trip-crit {
++					temperature = <56000>;
++					hysteresis = <2000>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map-cpu {
++					trip = <&skin_alert>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++							 <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++							 <&cpu7 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map-gpu {
++					trip = <&skin_alert>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++
++		msm-therm-thermal {
++			polling-delay-passive = <1000>;
++			thermal-sensors = <&pm8150l_adc_tm 0>;
++
++			trips {
++				msm_alert: trip-alert {
++					temperature = <47500>;
++					hysteresis = <3000>;
++					type = "passive";
++				};
++
++				msm_crit: trip-crit {
++					temperature = <56000>;
++					hysteresis = <2000>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map-cpu {
++					trip = <&msm_alert>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++							 <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++							 <&cpu7 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map-gpu {
++					trip = <&msm_alert>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++	};
++};
++
++&pm8150_adc {
++	channel@4d {
++		reg = <ADC5_AMUX_THM1_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		qcom,pre-scaling = <1 1>;
++		label = "skin_therm";
++	};
++};
++
++&pm8150_adc_tm {
++	status = "okay";
++
++	skin-therm@0 {
++		reg = <0>;
++		io-channels = <&pm8150_adc ADC5_AMUX_THM1_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++};
++
++&pm8150l_adc {
++	channel@4e {
++		reg = <ADC5_AMUX_THM2_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		qcom,pre-scaling = <1 1>;
++		label = "msm_therm";
++	};
++};
++
++&pm8150l_adc_tm {
++	status = "okay";
++
++	msm-therm@0 {
++		reg = <0>;
++		io-channels = <&pm8150l_adc ADC5_AMUX_THM2_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+index 619e42753..cae283a78 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+@@ -554,3 +554,4 @@ &wifi {
+ #include "sm8150-microsoft-surface-duo-usbc.dtsi"
+ #include "sm8150-microsoft-surface-duo-venus.dtsi"
+ #include "sm8150-microsoft-surface-duo-flash.dtsi"
++#include "sm8150-microsoft-surface-duo-thermal.dtsi"

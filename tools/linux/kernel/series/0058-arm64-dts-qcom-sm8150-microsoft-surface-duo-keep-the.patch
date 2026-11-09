@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 17:00:42 -0500
+Subject: [PATCH] arm64: dts: qcom: sm8150-microsoft-surface-duo: keep the UFS
+ clocks at 300 MHz
+
+With UFS clock scaling the host drops core_clk/core_clk_unipro to 37.5 MHz when idle and switches
+the gear down with them; on the Duo's UFS the link then never returns to HS-G3 (I/O errors, then
+a dead disk). Pinning both clocks at their maximum (freq-table-hz min = max) leaves devfreq
+nothing to scale, so the gear never changes, while every other UFS power-saving feature
+(clock gating, hibern8, runtime suspend) stays on.
+
+This replaces a machine-compatible check in ufs-qcom, which also stopped matching when the
+phone's own bootloader (ABL) replaces the root compatible string. Tested on both boot paths
+(UEFI and ABL): 3 rounds of 512 MB write/read with idle periods, 0 UFS errors.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ .../dts/qcom/sm8150-microsoft-surface-duo.dts    | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+index cae283a78..a884aca5b 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo.dts
+@@ -502,6 +502,22 @@ &ufs_mem_hc {
+ 	vccq-max-microamp = <700000>;
+ 	vccq2-supply = <&vreg_s4a_1p8>;
+ 	vccq2-max-microamp = <750000>;
++
++	/*
++	 * Keep core_clk and core_clk_unipro at 300 MHz: with the 37.5 MHz floor the
++	 * host's clock scaling drops the link out of HS-G3 and it never comes back.
++	 * min = max leaves devfreq nothing to scale.
++	 */
++	freq-table-hz =
++		<300000000 300000000>,
++		<0 0>,
++		<0 0>,
++		<300000000 300000000>,
++		<0 0>,
++		<0 0>,
++		<0 0>,
++		<0 0>,
++		<0 300000000>;
+ };
+ 
+ &ufs_mem_phy {

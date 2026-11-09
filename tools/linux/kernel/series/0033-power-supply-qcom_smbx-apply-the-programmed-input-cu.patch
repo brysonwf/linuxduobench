@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:42 -0500
+Subject: [PATCH] power: supply: qcom_smbx: apply the programmed input current
+ limit without APSD
+
+When APSD never completes - a PC port while the USB controller is in device mode owns D+/D- - the programmed
+USBIN current limit is ignored and the input stays at the default. Set ICL_OVERRIDE after writing the limit so the
+value written through current_max takes effect.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/power/supply/qcom_smbx.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+index 0ab98fb16..fdc9e490d 100644
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -429,8 +429,13 @@ static int smb_set_current_limit(struct smb_chip *chip, unsigned int val)
+ 	}
+ 	val_raw = val / CURRENT_SCALE_FACTOR;
+ 
+-	return regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
+-			    val_raw);
++	int rc = regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG, val_raw);
++
++	/* use the programmed limit even when APSD never completes (PC port + USB gadget) */
++	if (!rc)
++		rc = regmap_update_bits(chip->regmap, chip->base + CMD_ICL_OVERRIDE,
++					ICL_OVERRIDE_BIT, ICL_OVERRIDE_BIT);
++	return rc;
+ }
+ 
+ static void smb_status_change_work(struct work_struct *work)

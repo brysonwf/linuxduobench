@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Wed, 29 Jul 2026 08:55:41 -0700
+Subject: [PATCH] drm/msm: Synchronize set_sysprof on ctxlock
+
+A user that was perfmon_capable() could try to race setting SYSPROF
+param on multiple threads to trigger a reference leak.
+
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/743091/
+Message-ID: <20260729155609.20190-5-robin.clark@oss.qualcomm.com>
+(cherry picked from commit 2b1bfcb59d3f9bd4ab37eb6747fc783c67a7f82b)
+---
+ drivers/gpu/drm/msm/msm_submitqueue.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/msm_submitqueue.c b/drivers/gpu/drm/msm/msm_submitqueue.c
+index df6e2766e..cb9c5b5e8 100644
+--- a/drivers/gpu/drm/msm/msm_submitqueue.c
++++ b/drivers/gpu/drm/msm/msm_submitqueue.c
+@@ -9,6 +9,8 @@
+ 
+ int msm_context_set_sysprof(struct msm_context *ctx, struct msm_gpu *gpu, int sysprof)
+ {
++	guard(rwsem_write)(&ctx->ctxlock);
++
+ 	/*
+ 	 * Since pm_runtime and sysprof_active are both refcounts, we
+ 	 * call apply the new value first, and then unwind the previous

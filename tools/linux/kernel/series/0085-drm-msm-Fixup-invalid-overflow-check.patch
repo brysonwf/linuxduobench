@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Wed, 29 Jul 2026 08:55:54 -0700
+Subject: [PATCH] drm/msm: Fixup invalid overflow check
+
+On overflow struct_size() would return SIZE_MAX.  But kzalloc() (and
+friends) check this already, so we can just remove the check.
+
+On the other hand, we should be using the overflow helpers to calculate
+the cmd array size.
+
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/743111/
+Message-ID: <20260729155609.20190-18-robin.clark@oss.qualcomm.com>
+(cherry picked from commit 7aeada642ebfd52ddb87aaf1f0324a7fcf636610)
+---
+ drivers/gpu/drm/msm/msm_gem_submit.c | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_gem_submit.c b/drivers/gpu/drm/msm/msm_gem_submit.c
+index ad9a1aa69..b7ce8051a 100644
+--- a/drivers/gpu/drm/msm/msm_gem_submit.c
++++ b/drivers/gpu/drm/msm/msm_gem_submit.c
+@@ -36,14 +36,11 @@ static struct msm_gem_submit *submit_create(struct drm_device *dev,
+ {
+ 	static atomic_t ident = ATOMIC_INIT(0);
+ 	struct msm_gem_submit *submit;
+-	uint64_t sz;
++	size_t sz;
+ 	int ret;
+ 
+-	sz = struct_size(submit, bos, nr_bos) +
+-			((u64)nr_cmds * sizeof(submit->cmd[0]));
+-
+-	if (sz > SIZE_MAX)
+-		return ERR_PTR(-ENOMEM);
++	sz = size_add(struct_size(submit, bos, nr_bos),
++		      array_size(sizeof(submit->cmd[0]), nr_cmds));
+ 
+ 	submit = kzalloc(sz, GFP_KERNEL | __GFP_NOWARN);
+ 	if (!submit)

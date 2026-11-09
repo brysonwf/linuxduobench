@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Mon, 19 Jan 2026 19:07:57 +0200
+Subject: [PATCH] wifi: ath10k: snoc: support powering on the device via pwrseq
+
+The WCN39xx family of WiFi/BT chips incorporates a simple PMU, spreading
+voltages over internal rails. Implement support for using powersequencer
+for this family of ATH10k devices in addition to using regulators.
+
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+ drivers/net/wireless/ath/ath10k/snoc.c | 53 ++++++++++++++++++++++++--
+ drivers/net/wireless/ath/ath10k/snoc.h |  3 ++
+ 2 files changed, 53 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath10k/snoc.c b/drivers/net/wireless/ath/ath10k/snoc.c
+index b3f6424c1..f72f236fb 100644
+--- a/drivers/net/wireless/ath/ath10k/snoc.c
++++ b/drivers/net/wireless/ath/ath10k/snoc.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: ISC
+ /*
+  * Copyright (c) 2018 The Linux Foundation. All rights reserved.
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+  */
+ 
+ #include <linux/bits.h>
+@@ -11,6 +12,7 @@
+ #include <linux/of_device.h>
+ #include <linux/platform_device.h>
+ #include <linux/property.h>
++#include <linux/pwrseq/consumer.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/remoteproc/qcom_rproc.h>
+ #include <linux/of_reserved_mem.h>
+@@ -1023,10 +1025,14 @@ static int ath10k_hw_power_on(struct ath10k *ar)
+ 
+ 	ath10k_dbg(ar, ATH10K_DBG_SNOC, "soc power on\n");
+ 
+-	ret = regulator_bulk_enable(ar_snoc->num_vregs, ar_snoc->vregs);
++	ret = pwrseq_power_on(ar_snoc->pwrseq);
+ 	if (ret)
+ 		return ret;
+ 
++	ret = regulator_bulk_enable(ar_snoc->num_vregs, ar_snoc->vregs);
++	if (ret)
++		goto pwrseq_off;
++
+ 	ret = clk_bulk_prepare_enable(ar_snoc->num_clks, ar_snoc->clks);
+ 	if (ret)
+ 		goto vreg_off;
+@@ -1035,18 +1041,28 @@ static int ath10k_hw_power_on(struct ath10k *ar)
+ 
+ vreg_off:
+ 	regulator_bulk_disable(ar_snoc->num_vregs, ar_snoc->vregs);
++pwrseq_off:
++	pwrseq_power_off(ar_snoc->pwrseq);
++
+ 	return ret;
+ }
+ 
+ static int ath10k_hw_power_off(struct ath10k *ar)
+ {
+ 	struct ath10k_snoc *ar_snoc = ath10k_snoc_priv(ar);
++	int ret_seq = 0;
++	int ret_vreg;
+ 
+ 	ath10k_dbg(ar, ATH10K_DBG_SNOC, "soc power off\n");
+ 
+ 	clk_bulk_disable_unprepare(ar_snoc->num_clks, ar_snoc->clks);
+ 
+-	return regulator_bulk_disable(ar_snoc->num_vregs, ar_snoc->vregs);
++	ret_vreg = regulator_bulk_disable(ar_snoc->num_vregs, ar_snoc->vregs);
++
++	if (ar_snoc->pwrseq)
++		ret_seq = pwrseq_power_off(ar_snoc->pwrseq);
++
++	return ret_vreg ? : ret_seq;
+ }
+ 
+ static void ath10k_snoc_wlan_disable(struct ath10k *ar)
+@@ -1762,7 +1778,38 @@ static int ath10k_snoc_probe(struct platform_device *pdev)
+ 		goto err_release_resource;
+ 	}
+ 
+-	ar_snoc->num_vregs = ARRAY_SIZE(ath10k_regulators);
++	/*
++	 * devm_pwrseq_get() can return -EPROBE_DEFER in two cases:
++	 * - it is not supposed to be used
++	 * - it is supposed to be used, but the driver hasn't probed yet.
++	 *
++	 * There is no simple way to distinguish between these two cases, but:
++	 * - if it is not supposed to be used, then regulator_bulk_get() will
++	 *   return all regulators as expected, continuing the probe
++	 * - if it is supposed to be used, but wasn't probed yet, we will get
++	 *   -EPROBE_DEFER from regulator_bulk_get() too.
++	 *
++	 * For backwards compatibility with DTs specifying regulators directly
++	 * rather than using the PMU device, ignore the defer error from
++	 * pwrseq.
++	 */
++	ar_snoc->pwrseq = devm_pwrseq_get(&pdev->dev, "wlan");
++	if (IS_ERR(ar_snoc->pwrseq)) {
++		ret = PTR_ERR(ar_snoc->pwrseq);
++		ar_snoc->pwrseq = NULL;
++		if (ret != -EPROBE_DEFER)
++			goto err_free_irq;
++
++		ar_snoc->num_vregs = ARRAY_SIZE(ath10k_regulators);
++	} else {
++		/*
++		 * The first regulator (vdd-0.8-cx-mx) is used to power on part
++		 * of the SoC rather than the PMU on WCN399x, the rest are
++		 * handled via pwrseq.
++		 */
++		ar_snoc->num_vregs = 1;
++	}
++
+ 	ar_snoc->vregs = devm_kcalloc(&pdev->dev, ar_snoc->num_vregs,
+ 				      sizeof(*ar_snoc->vregs), GFP_KERNEL);
+ 	if (!ar_snoc->vregs) {
+diff --git a/drivers/net/wireless/ath/ath10k/snoc.h b/drivers/net/wireless/ath/ath10k/snoc.h
+index d4bce1707..1ecae3468 100644
+--- a/drivers/net/wireless/ath/ath10k/snoc.h
++++ b/drivers/net/wireless/ath/ath10k/snoc.h
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: ISC */
+ /*
+  * Copyright (c) 2018 The Linux Foundation. All rights reserved.
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+  */
+ 
+ #ifndef _SNOC_H_
+@@ -53,6 +54,7 @@ enum ath10k_snoc_flags {
+ };
+ 
+ struct clk_bulk_data;
++struct pwrseq_desc;
+ struct regulator_bulk_data;
+ 
+ struct ath10k_snoc {
+@@ -73,6 +75,7 @@ struct ath10k_snoc {
+ 	struct ath10k_snoc_ce_irq ce_irqs[CE_COUNT_MAX];
+ 	struct ath10k_ce ce;
+ 	struct timer_list rx_post_retry;
++	struct pwrseq_desc *pwrseq;
+ 	struct regulator_bulk_data *vregs;
+ 	size_t num_vregs;
+ 	struct clk_bulk_data *clks;

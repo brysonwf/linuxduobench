@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 22:22:59 -0500
+Subject: [PATCH] arm64: dts: qcom: sm8150-microsoft-surface-duo: play the
+ speaker with its own tuning
+
+Use what Android uses for the speaker: mono, 24 bit, the copp topology 0x10010313 (equaliser,
+multiband compressor, gain) and the AFE topology 0x1001025e (feed-forward speaker protection), with
+the phone's own calibration. The files are made on the phone from its calibration database; without
+them the speaker plays untuned as before.
+
+In a blind A/B against the untuned stereo path (same loudness), the tuned speaker was preferred.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ .../sm8150-microsoft-surface-duo-audio.dtsi   | 21 +++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
+index b57f514cc..0584578f5 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-audio.dtsi
+@@ -65,6 +65,9 @@ cpu {
+ 
+ 		slim-dai-link {
+ 			link-name = "SLIM Playback";
++			/* Android's speaker format: one channel (FC), 24 bit, fixed for the whole boot */
++			qcom,channels = <1>;
++			qcom,bits-per-sample = <24>;
+ 			cpu {
+ 				sound-dai = <&q6afedai SLIMBUS_0_RX>;
+ 			};
+@@ -234,6 +237,13 @@ q6afedai: dais {
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
+ 					#sound-dai-cells = <1>;
++
++					/* speaker: feed-forward speaker protection, Android's AFE topology + tuning */
++					dai@2 {
++						reg = <SLIMBUS_0_RX>;
++						qcom,afe-topology = <0x1001025e>;
++						qcom,afe-calibration = "qcom/sm8150/microsoft/speaker-afe.bin";
++					};
+ 				};
+ 			};
+ 
+@@ -262,6 +272,17 @@ q6adm: service@8 {
+ 				q6routing: routing {
+ 					compatible = "qcom,q6adm-routing";
+ 					#sound-dai-cells = <0>;
++					/* the custom-topology buffer is read through msm-audio-ion's SMMU context */
++					iommus = <&apps_smmu 0x1b21 0x0>;
++					/* made on the phone from its own ACDB (tools/linux/audio-tuning) */
++					firmware-name = "qcom/sm8150/microsoft/avcs-topologies.bin";
++
++					/* speaker: Android's mono COPP chain (MBDRC) + its tuning */
++					speaker {
++						qcom,afe-dai = <SLIMBUS_0_RX>;
++						qcom,copp-topology = <0x10010313>;
++						qcom,copp-calibration = "qcom/sm8150/microsoft/speaker-copp.bin";
++					};
+ 				};
+ 			};
+ 		};

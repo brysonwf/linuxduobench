@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Ends the boot animation (its end frame, then the player exits) before the display manager starts.
+[Unit]
+Description=Surface Duo: end the boot animation before the GUI
+After=duo-hw.service duo-bootanim.service
+Before=display-manager.service sddm.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-bootanim done
+
+[Install]
+WantedBy=multi-user.target

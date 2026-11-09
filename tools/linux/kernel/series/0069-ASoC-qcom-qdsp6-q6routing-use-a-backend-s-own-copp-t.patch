@@ -1,0 +1,269 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 22:22:58 -0500
+Subject: [PATCH] ASoC: qcom: qdsp6: q6routing: use a backend's own copp
+ topology and calibration
+
+All copps are opened with the null topology, so a device's speaker tuning (equaliser, multiband
+compressor, gain) never runs. Let the routing node describe it: "firmware-name" names the custom
+topology definitions, and a child node per backend gives the copp topology and a calibration file
+(module/param blocks for ADM_CMD_SET_PP_PARAMS_V5, sent in-band after the copp opens; new
+q6adm_set_pp_params()).
+
+The files are made on the device from its own calibration database, so they are loaded on the first
+playback hw_params of such a backend (and registered again after a DSP restart), not at probe. Without
+them, or if the DSP refuses them, the backend keeps the null topology as before.
+
+Tested on a Surface Duo: the speaker's copp opens with topology 0x10010313 and its 668-byte tuning
+applies with status 0; reading the gain parameter back shows the tuned value.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ sound/soc/qcom/qdsp6/q6adm.c     | 42 +++++++++++++++
+ sound/soc/qcom/qdsp6/q6adm.h     |  2 +
+ sound/soc/qcom/qdsp6/q6routing.c | 92 ++++++++++++++++++++++++++++++++
+ 3 files changed, 136 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6adm.c b/sound/soc/qcom/qdsp6/q6adm.c
+index 0b8d06ec8..f4026e1ab 100644
+--- a/sound/soc/qcom/qdsp6/q6adm.c
++++ b/sound/soc/qcom/qdsp6/q6adm.c
+@@ -25,6 +25,7 @@
+ #define ADM_CMDRSP_DEVICE_OPEN_V5	0x00010329
+ #define ADM_CMD_DEVICE_CLOSE_V5		0x00010327
+ #define ADM_CMD_MATRIX_MAP_ROUTINGS_V5	0x00010325
++#define ADM_CMD_SET_PP_PARAMS_V5	0x00010328
+ 
+ #define TIMEOUT_MS 1000
+ #define RESET_COPP_ID 99
+@@ -219,6 +220,7 @@ static int q6adm_callback(struct apr_device *adev, struct apr_resp_pkt *data)
+ 		switch (result->opcode) {
+ 		case ADM_CMD_DEVICE_OPEN_V5:
+ 		case ADM_CMD_DEVICE_CLOSE_V5:
++		case ADM_CMD_SET_PP_PARAMS_V5:
+ 			list_for_each_entry(copp, &adm->copps_list, node) {
+ 				if ((port_idx == copp->afe_port) && (copp_idx == copp->copp_idx)) {
+ 					copp->result = *result;
+@@ -547,6 +549,46 @@ int q6adm_matrix_map(struct device *dev, int path,
+ }
+ EXPORT_SYMBOL_GPL(q6adm_matrix_map);
+ 
++/**
++ * q6adm_set_pp_params() - Set post-processing parameters of a copp
++ *
++ * @dev: Pointer to adm child device.
++ * @copp: copp to configure.
++ * @port_id: afe port id of the copp.
++ * @data: parameters: repeated module id, param id, u16 size, u16 0, data padded to 4 bytes.
++ * @size: size of @data.
++ *
++ * Return: Will be an negative on error or a zero on success.
++ */
++int q6adm_set_pp_params(struct device *dev, struct q6copp *copp, int port_id,
++			const void *data, size_t size)
++{
++	struct q6adm *adm = dev_get_drvdata(dev->parent);
++	int pkt_size = APR_HDR_SIZE + 4 * sizeof(u32) + size;
++	void *p __free(kfree) = kzalloc(pkt_size, GFP_KERNEL);
++	struct apr_pkt *pkt = p;
++	u32 *cmd;
++	int ret;
++
++	if (!p)
++		return -ENOMEM;
++	cmd = p + APR_HDR_SIZE;
++	pkt->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
++	pkt->hdr.pkt_size = pkt_size;
++	pkt->hdr.src_port = q6afe_get_port_id(port_id);
++	pkt->hdr.dest_port = copp->id;
++	pkt->hdr.token = port_id << 16 | copp->copp_idx;
++	pkt->hdr.opcode = ADM_CMD_SET_PP_PARAMS_V5;
++	/* in-band: payload address and memory map handle stay 0 */
++	cmd[3] = size;
++	memcpy(&cmd[4], data, size);
++
++	ret = q6adm_apr_send_copp_pkt(adm, copp, pkt, 0);
++
++	return ret < 0 ? ret : 0;
++}
++EXPORT_SYMBOL_GPL(q6adm_set_pp_params);
++
+ /**
+  * q6adm_close() - Close adm copp
+  *
+diff --git a/sound/soc/qcom/qdsp6/q6adm.h b/sound/soc/qcom/qdsp6/q6adm.h
+index 4f56999b7..ba5c6cb31 100644
+--- a/sound/soc/qcom/qdsp6/q6adm.h
++++ b/sound/soc/qcom/qdsp6/q6adm.h
+@@ -20,6 +20,8 @@ struct q6copp *q6adm_open(struct device *dev, int port_id, int path, int rate,
+ 			   int channel_mode, int topology, int perf_mode,
+ 			   uint16_t bit_width, int app_type, int acdb_id);
+ int q6adm_close(struct device *dev, struct q6copp *copp);
++int q6adm_set_pp_params(struct device *dev, struct q6copp *copp, int port_id,
++			const void *data, size_t size);
+ int q6adm_get_copp_id(struct q6copp *copp);
+ int q6adm_matrix_map(struct device *dev, int path,
+ 		     struct route_payload payload_map, int perf_mode);
+diff --git a/sound/soc/qcom/qdsp6/q6routing.c b/sound/soc/qcom/qdsp6/q6routing.c
+index aaa3af9f1..06bc85cae 100644
+--- a/sound/soc/qcom/qdsp6/q6routing.c
++++ b/sound/soc/qcom/qdsp6/q6routing.c
+@@ -8,6 +8,7 @@
+ #include <linux/err.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/firmware.h>
+ #include <linux/platform_device.h>
+ #include <linux/bitops.h>
+ #include <linux/mutex.h>
+@@ -22,6 +23,7 @@
+ #include "q6afe.h"
+ #include "q6asm.h"
+ #include "q6adm.h"
++#include "q6core.h"
+ #include "q6routing.h"
+ 
+ #define DRV_NAME "q6routing-component"
+@@ -339,13 +341,89 @@ struct session_data {
+ 	struct q6copp *copps[MAX_COPPS_PER_PORT];
+ };
+ 
++/* a backend whose copp uses the device's own topology + calibration */
++struct q6routing_tuning {
++	u32 port;
++	u32 copp_topology;
++	const char *copp_cal_name;
++	void *copp_cal;
++	size_t copp_cal_size;
++};
++
+ struct msm_routing_data {
+ 	struct session_data sessions[MAX_SESSIONS];
+ 	struct session_data port_data[AFE_MAX_PORTS];
+ 	struct device *dev;
+ 	struct mutex lock;
++	const char *topologies_fw;
++	struct q6routing_tuning *tuning;
++	int num_tuning;
++	struct mutex tuning_lock;
+ };
+ 
++static struct q6routing_tuning *q6routing_find_tuning(struct msm_routing_data *data, int port)
++{
++	int i;
++
++	for (i = 0; i < data->num_tuning; i++)
++		if (data->tuning[i].port == port)
++			return &data->tuning[i];
++	return NULL;
++}
++
++/*
++ * Register the device's custom topologies and load the copp calibration. The files are made at run time from
++ * the device's own calibration database, so this runs on first use (and again after a DSP restart), not at probe.
++ */
++static void q6routing_load_tuning(struct msm_routing_data *data)
++{
++	const struct firmware *fw;
++	int i, ret;
++
++	mutex_lock(&data->tuning_lock);
++	if (q6core_custom_topologies_ready() ||
++	    request_firmware_direct(&fw, data->topologies_fw, data->dev))
++		goto out;
++	ret = q6core_register_custom_topologies(data->dev, fw->data, fw->size);
++	release_firmware(fw);
++	if (ret)
++		goto out;
++	for (i = 0; i < data->num_tuning; i++) {
++		struct q6routing_tuning *t = &data->tuning[i];
++
++		if (t->copp_cal || !t->copp_cal_name ||
++		    request_firmware_direct(&fw, t->copp_cal_name, data->dev))
++			continue;
++		t->copp_cal = devm_kmemdup(data->dev, fw->data, fw->size, GFP_KERNEL);
++		t->copp_cal_size = t->copp_cal ? fw->size : 0;
++		release_firmware(fw);
++	}
++out:
++	mutex_unlock(&data->tuning_lock);
++}
++
++static void q6routing_parse_tuning(struct device *dev, struct msm_routing_data *data)
++{
++	int n = 0;
++
++	if (of_property_read_string(dev->of_node, "firmware-name", &data->topologies_fw))
++		return;
++	data->tuning = devm_kcalloc(dev, of_get_child_count(dev->of_node), sizeof(*data->tuning),
++				    GFP_KERNEL);
++	if (!data->tuning)
++		return;
++	for_each_child_of_node_scoped(dev->of_node, np) {
++		struct q6routing_tuning *t = &data->tuning[n];
++
++		if (of_property_read_u32(np, "qcom,afe-dai", &t->port) ||
++		    of_property_read_u32(np, "qcom,copp-topology", &t->copp_topology))
++			continue;
++		of_property_read_string(np, "qcom,copp-calibration", &t->copp_cal_name);
++		n++;
++	}
++	data->num_tuning = n;
++}
++
+ static struct msm_routing_data *routing_data;
+ 
+ /**
+@@ -366,6 +444,7 @@ int q6routing_stream_open(int fedai_id, int perf_mode,
+ 	struct q6copp *copp;
+ 	int copp_idx;
+ 	struct session_data *session, *pdata;
++	struct q6routing_tuning *tuning;
+ 
+ 	if (!routing_data) {
+ 		pr_err("Routing driver not yet ready\n");
+@@ -390,7 +469,10 @@ int q6routing_stream_open(int fedai_id, int perf_mode,
+ 	session->bits_per_sample = pdata->bits_per_sample;
+ 
+ 	payload.num_copps = 0; /* only RX needs to use payload */
++	tuning = q6routing_find_tuning(routing_data, session->port_id);
+ 	topology = NULL_COPP_TOPOLOGY;
++	if (tuning && session->path_type == ADM_PATH_PLAYBACK && q6core_custom_topologies_ready())
++		topology = tuning->copp_topology;
+ 	copp = q6adm_open(routing_data->dev, session->port_id,
+ 			      session->path_type, session->sample_rate,
+ 			      session->channels, topology, perf_mode,
+@@ -400,6 +482,10 @@ int q6routing_stream_open(int fedai_id, int perf_mode,
+ 		mutex_unlock(&routing_data->lock);
+ 		return -EINVAL;
+ 	}
++	if (topology != NULL_COPP_TOPOLOGY && tuning->copp_cal &&
++	    q6adm_set_pp_params(routing_data->dev, copp, session->port_id,
++				tuning->copp_cal, tuning->copp_cal_size))
++		dev_err(routing_data->dev, "copp calibration not applied\n");
+ 
+ 	copp_idx = q6adm_get_copp_id(copp);
+ 	set_bit(copp_idx, &session->copp_map);
+@@ -1060,6 +1146,10 @@ static int routing_hw_params(struct snd_soc_component *component,
+ 	struct session_data *session;
+ 	int path_type;
+ 
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
++	    q6routing_find_tuning(data, be_id))
++		q6routing_load_tuning(data);
++
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+ 		path_type = ADM_PATH_PLAYBACK;
+ 	else
+@@ -1140,6 +1230,8 @@ static int q6pcm_routing_probe(struct platform_device *pdev)
+ 	routing_data->dev = dev;
+ 
+ 	mutex_init(&routing_data->lock);
++	mutex_init(&routing_data->tuning_lock);
++	q6routing_parse_tuning(dev, routing_data);
+ 	dev_set_drvdata(dev, routing_data);
+ 
+ 	return devm_snd_soc_register_component(dev, &msm_soc_routing_component,

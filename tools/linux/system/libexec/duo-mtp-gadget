@@ -1,0 +1,60 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The Duo as an MTP device on the PC, like a phone under "This PC" (2026-11-06, request: "show up ... like a thumb
+# drive", "maybe the downloads folder", "a real surface duo icon ... automatically", "real MS icon").
+# Run ON the phone as root (postmarketOS). Needs /usr/local/sbin/umtprd (tools/linux/desktop/build-umtprd.sh).
+#  - MTP (FunctionFS, umtprd) becomes INTERFACE 0 of our gadget, in front of the NCM network (SSH) + ACM serial
+#  - the gadget takes the Duo's own Android composite identity 045E:0C2A (on the author's PC: MI_00 = "Surface Duo"),
+#    so Windows names it Surface Duo and shows its icon from its own device metadata - nothing on the PC to set up
+#  - shares /home/user/Downloads + /home/user/Pictures READ-ONLY (files owned by the session user). MTP cannot ask
+#    for a password, and the PC should need one to WRITE (2026-11-06) -> writes go through a password-
+#    protected share over the USB network instead
+# The USB link re-enumerates once (a few seconds); the PC's serial COM number may change. usage: duo-mtp.sh [off]
+set -e
+G=/sys/kernel/config/usb_gadget/duo; C=$(ls -d $G/configs/* | head -1); F=/dev/ffs-mtp; U=10000
+PATH=/usr/local/sbin:$PATH   # our own umtprd build (device icon) first, else the distribution's (Debian: umtp-responder)
+command -v umtprd > /dev/null || { echo "no umtprd (install umtp-responder, or build-umtprd.sh)"; exit 1; }
+off() { echo "" > $G/UDC 2>/dev/null || true; killall umtprd 2>/dev/null || true; sleep 1
+        rm -f $C/ffs.mtp; umount $F 2>/dev/null || true; rmdir $G/functions/ffs.mtp 2>/dev/null || true; }
+if [ "$1" = off ]; then
+  off; echo 0x18d1 > $G/idVendor; echo 0x4ee7 > $G/idProduct
+  ls /sys/class/udc | head -1 > $G/UDC; echo "MTP off"; exit 0
+fi
+mkdir -p /etc/umtprd
+cat > /etc/umtprd/umtprd.conf <<EOF
+loop_on_disconnect 1
+storage "/home/user/Downloads" "Downloads" "ro"
+storage "/home/user/Pictures" "Pictures" "ro"
+manufacturer "Microsoft"
+product "Surface Duo"
+serial "SurfaceDuo1"
+firmware_version "postmarketOS"
+interface "MTP"
+usb_functionfs_mode 0x1
+usb_dev_path "$F/ep0"
+usb_epin_path "$F/ep1"
+usb_epout_path "$F/ep2"
+usb_epint_path "$F/ep3"
+usb_max_packet_size 0x200
+# room for the device icon (MTP 0xD405, /etc/umtprd/device.ico) in one data phase (umtprd-device-icon.py)
+usb_max_wr_buffer_size 0x10000
+default_uid $U
+default_gid $U
+umask 022
+EOF
+off
+echo 0x045e > $G/idVendor; echo 0x0c2a > $G/idProduct
+echo "Microsoft" > $G/strings/0x409/manufacturer; echo "Surface Duo" > $G/strings/0x409/product
+# a serial of its own: Windows caches a device's icon/type per device instance (= serial), and the instance created
+# before umtprd sent its icon (0xD405) kept the generic icon - a new serial makes Windows ask again (2026-11-06)
+echo "SurfaceDuo1" > $G/strings/0x409/serialnumber
+mkdir -p $G/functions/ffs.mtp
+# interface order = link order: MTP first (MI_00 "Surface Duo"), then the existing functions
+for l in $C/*.usb0; do [ -L "$l" ] && { n=${l##*/}; rm -f "$l"; echo "$n" >> /tmp/duo-mtp-relink; }; done
+ln -s $G/functions/ffs.mtp $C/ffs.mtp
+while read n; do ln -s $G/functions/$n $C/$n; done < /tmp/duo-mtp-relink; rm -f /tmp/duo-mtp-relink
+mkdir -p $F; mount -t functionfs mtp $F
+umtprd > /var/log/umtprd.log 2>&1 &
+sleep 2                                   # umtprd writes the descriptors to ep0 before the gadget binds
+ls /sys/class/udc | head -1 > $G/UDC
+echo "MTP on: $(cat $G/idVendor):$(cat $G/idProduct), functions $(ls $C | grep -v -e MaxPower -e bmAttributes -e strings | tr '\n' ' ')"

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo (Debian, /etc/chromium.d/duo): Chromium on Wayland with text-input-v3, so the on-screen keyboard opens only
+# for text fields and the page resizes above it; no keyring prompt for the password-less auto-login user (the hidden
+# dialog under the keyboard on pmOS was exactly that prompt, 2026-11-07/08).
+export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --ozone-platform-hint=auto --enable-wayland-ime --wayland-text-input-version=3 --password-store=basic"

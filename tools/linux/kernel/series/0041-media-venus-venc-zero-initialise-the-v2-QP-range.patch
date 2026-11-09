@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:46 -0500
+Subject: [PATCH] media: venus: venc: zero-initialise the v2 QP range
+
+venc_set_properties() sends struct hfi_quantization_range_v2 with only some fields set; the rest is stack garbage.
+The SM8150 firmware hung on it. Initialise the struct.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/media/platform/qcom/venus/venc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/venus/venc.c b/drivers/media/platform/qcom/venus/venc.c
+index b478b982a..b9701b54f 100644
+--- a/drivers/media/platform/qcom/venus/venc.c
++++ b/drivers/media/platform/qcom/venus/venc.c
+@@ -664,7 +664,7 @@ static int venc_set_properties(struct venus_inst *inst)
+ 	struct hfi_idr_period idrp;
+ 	struct hfi_quantization quant;
+ 	struct hfi_quantization_range quant_range;
+-	struct hfi_quantization_range_v2 quant_range_v2;
++	struct hfi_quantization_range_v2 quant_range_v2 = {};
+ 	struct hfi_enable en;
+ 	struct hfi_ltr_mode ltr_mode;
+ 	struct hfi_intra_refresh intra_refresh = {};

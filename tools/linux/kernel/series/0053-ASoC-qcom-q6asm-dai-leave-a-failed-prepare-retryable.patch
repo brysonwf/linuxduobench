@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 14:05:53 -0500
+Subject: [PATCH] ASoC: qcom: q6asm-dai: leave a failed prepare retryable
+
+When q6asm_dai_prepare() failed after the DSP stream was opened, it either returned with the stream still
+open (media format block failure: only logged, no cleanup) or freed the audio client while the PCM stayed open.
+The next prepare then failed: the session's stream was already open on the DSP (ADSP_EALREADY, 'DSP returned
+error[9]'), and with the client freed every further prepare failed with 'private data null or audio client
+freed' - capture stayed dead until a reboot. Seen on the Surface Duo when PipeWire's card profile was switched
+off and on quickly.
+
+Undo exactly what this prepare set up (routing, DSP stream, memory map) on every error path, keep the audio client
+(close() frees it), and name the failing call (open_write or open_read) in the error message.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ sound/soc/qcom/qdsp6/q6asm-dai.c | 25 +++++++++++++++++--------
+ 1 file changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 709b4f331..854ed72c3 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -257,7 +257,8 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 	}
+ 
+ 	if (ret < 0) {
+-		dev_err(dev, "%s: q6asm_open_write failed\n", __func__);
++		dev_err(dev, "%s: q6asm_open_%s failed\n", __func__,
++			substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? "write" : "read");
+ 		goto open_err;
+ 	}
+ 
+@@ -286,19 +287,27 @@ static int q6asm_dai_prepare(struct snd_soc_component *component,
+ 			q6asm_read(prtd->audio_client, prtd->stream_id);
+ 
+ 	}
+-	if (ret < 0)
+-		dev_info(dev, "%s: CMD Format block failed\n", __func__);
+-	else
+-		prtd->state = Q6ASM_STREAM_RUNNING;
++	if (ret < 0) {
++		dev_err(dev, "%s: CMD Format block failed\n", __func__);
++		goto format_err;
++	}
+ 
+-	return ret;
++	prtd->state = Q6ASM_STREAM_RUNNING;
+ 
++	return 0;
++
++	/*
++	 * Undo exactly what this prepare set up, so a later prepare can start again: the DSP stream must not stay
++	 * open (the next open of the session would fail with ADSP_EALREADY), and the audio client stays - it belongs
++	 * to the open PCM and is freed in close(). Freeing it here left every later prepare failing with "audio
++	 * client freed" until the PCM was closed, and the leaked DSP session kept failing after reopening.
++	 */
++format_err:
++	q6routing_stream_close(soc_prtd->dai_link->id, substream->stream);
+ routing_err:
+ 	q6asm_cmd(prtd->audio_client, prtd->stream_id,  CMD_CLOSE);
+ open_err:
+ 	q6asm_unmap_memory_regions(substream->stream, prtd->audio_client);
+-	q6asm_audio_client_free(prtd->audio_client);
+-	prtd->audio_client = NULL;
+ 
+ 	return ret;
+ }

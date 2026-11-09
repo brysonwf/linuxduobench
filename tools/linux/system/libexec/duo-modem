@@ -1,0 +1,64 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo modem DSP + Wi-Fi (docs/research/workbench/modem.md, wifi-bt.md):
+#  - firmware LINKS (never copies) from the phone's own modem_a, mounted read-only, into /lib/firmware/duo (searched
+#    first via firmware_class.path): qcom/sm8150/microsoft/* + ath10k board.bin = the Duo's own bdwlan.bin (no generic
+#    board-2.bin may be installed - it overrode the Duo's calibration and crashed WCSS)
+#  - the audio DSP started if the initramfs could not; IPA (mobile data) loaded BEFORE the modem, its GSI firmware from
+#    vendor_a; the modem (MPSS) started with recovery OFF + a 2-crash limiter (the recovery loop wedged USB/SSH)
+#  - operating mode LOW-POWER first (online straight from the boot state trips the RF QLink assertion), then
+#    ModemManager; wlan0 gets the phone's own MAC from persist (read-only, never stored)
+# Needs rmtfs + tqftpserv running (not pd-mapper: it is in our kernel). usage: duo-modem start
+DUO_NAME=duo-modem; . /usr/libexec/duo/duo-lib.sh
+[ "$1" = start ] || exit 0
+
+F=/lib/firmware/duo; mkdir -p /mnt/modem $F/qcom/sm8150/microsoft $F/ath10k/WCN3990/hw1.0
+mountpoint -q /mnt/modem || mount -o ro /dev/$(part modem_a) /mnt/modem || { log "modem_a not mounted"; exit 1; }
+for f in /mnt/modem/image/*; do ln -sf "$f" "$F/qcom/sm8150/microsoft/${f##*/}"; done
+ln -sf /mnt/modem/image/bdwlan.bin $F/ath10k/WCN3990/hw1.0/board.bin
+echo -n $F > /sys/module/firmware_class/parameters/path
+log "firmware links from modem_a"
+
+for r in /sys/class/remoteproc/remoteproc*; do
+	[ "$(cat $r/name 2>/dev/null)" = adsp ] && [ "$(cat $r/state 2>/dev/null)" = offline ] && echo start > $r/state 2>/dev/null
+done
+
+IPA=$(duo_modules)/ipa.ko
+if [ -f "$IPA" ] && [ ! -d /sys/module/ipa ]; then
+	vendor_mount && for f in /mnt/vendor-fw/firmware/ipa_fws.*; do [ -e "$f" ] && ln -sf "$f" "$F/qcom/sm8150/${f##*/}"; done
+	insmod "$IPA" 2>/dev/null && log "IPA loaded (mobile data path)"
+fi
+
+R=""
+for r in /sys/class/remoteproc/remoteproc*; do
+	case "$(cat $r/name 2>/dev/null)" in *4080000*|*mpss*|*modem*)
+		echo disabled > $r/recovery 2>/dev/null
+		[ "$(cat $r/state)" = running ] || echo start > $r/state 2>/dev/null
+		R=$r ;;
+	esac
+done
+log "modem DSP started (recovery off)"
+
+# background: crash limiter, low-power + ModemManager, wlan0 MAC (boot is not held up)
+[ -n "$R" ] && ( for i in $(seq 1 120); do
+	[ "$(dmesg | grep -c 'crash detected in modem')" -ge 2 ] && { echo disabled > $R/recovery; break; }; sleep 1; done ) > /dev/null 2>&1 &
+# without IPA: a veth stand-in (78-duo-mm-qcom-soc.rules) lets ModemManager's qcom-soc plugin keep the QMI modem
+if [ ! -d /sys/module/ipa ]; then
+	[ -e /sys/class/net/duo-qmi0 ] || ip link add duo-qmi0 type veth peer name duo-qmi1 2>/dev/null
+	ip link set duo-qmi0 up 2>/dev/null
+fi
+command -v qmicli > /dev/null && (
+	for i in $(seq 1 30); do timeout 10 qmicli -d qrtr://0 --dms-set-operating-mode=low-power > /dev/null 2>&1 && break; sleep 2; done
+	for i in $(seq 1 12); do service modemmanager status > /dev/null 2>&1 && break; service modemmanager start > /dev/null 2>&1; sleep 5; done
+	sleep 3; mmcli -S > /dev/null 2>&1
+) > /dev/null 2>&1 &
+(
+	Q=$(part persist); mkdir -p /mnt/persist
+	[ -n "$Q" ] && { mountpoint -q /mnt/persist || mount -o ro /dev/$Q /mnt/persist; }
+	M=$(cat /mnt/persist/wlan_mac.bin /mnt/persist/wlan/wlan_mac.bin /mnt/modem/image/wlan_mac.bin 2>/dev/null |
+		sed -n 's/^Intf0MacAddress=\([0-9A-Fa-f]\{12\}\).*/\1/p' | head -1 | sed 's/../&:/g; s/:$//')
+	for i in $(seq 1 90); do [ -e /sys/class/net/wlan0 ] && break; sleep 1; done
+	[ -n "$M" ] && { ip link set wlan0 down; ip link set wlan0 address "$M"; ip link set wlan0 up; }
+	sleep 8; command -v nmcli > /dev/null && nmcli device connect wlan0
+) > /dev/null 2>&1 &
+exit 0

@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 15:21:06 -0500
+Subject: [PATCH] Input: da7280 - support FF_RUMBLE
+
+Desktop and phone userspace drives vibration motors through FF_RUMBLE
+(feedbackd refuses a device without it: "No rumble capable vibra device";
+hfd-service, used by Plasma Mobile, picks the first FF_RUMBLE device), but
+the driver only offered FF_CONSTANT and FF_PERIODIC with custom waveforms,
+so the input core's rumble emulation (a sine periodic effect) was rejected
+with "Device can only accept FF_CUSTOM waveform".
+
+Play a rumble effect like a constant one, at the stronger of the two
+magnitudes (the Surface Duo has one motor), in the constant-effect
+operating mode.
+
+This patch was written by Claude (Anthropic's AI assistant) under the
+direction of Bryson, who tested it on his Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/input/misc/da7280.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/input/misc/da7280.c b/drivers/input/misc/da7280.c
+index e4a605c6a..ec2b26643 100644
+--- a/drivers/input/misc/da7280.c
++++ b/drivers/input/misc/da7280.c
+@@ -529,6 +529,21 @@ static int da7280_haptics_upload_effect(struct input_dev *dev,
+ 					0 : effect->u.constant.level;
+ 		break;
+ 
++	/*
++	 * A single motor: play the stronger of the two rumble magnitudes like a constant effect at that level
++	 * (userspace such as feedbackd only drives FF_RUMBLE devices).
++	 */
++	case FF_RUMBLE:
++		tmp = max(effect->u.rumble.strong_magnitude, effect->u.rumble.weak_magnitude);
++		haptics->op_mode = haptics->const_op_mode;
++		if (haptics->op_mode == DA7280_DRO_MODE) {
++			haptics->level = tmp * 254 / 0xFFFF;
++			break;
++		}
++
++		haptics->gain = tmp / 2;	/* 0..0xFFFF -> the constant effect's 0..0x7FFF */
++		break;
++
+ 	/* RTWM/ETWM modes support this type */
+ 	case FF_PERIODIC:
+ 		if (effect->u.periodic.waveform != FF_CUSTOM) {
+@@ -1226,6 +1241,7 @@ static int da7280_probe(struct i2c_client *client)
+ 
+ 	input_set_capability(haptics->input_dev, EV_FF, FF_PERIODIC);
+ 	input_set_capability(haptics->input_dev, EV_FF, FF_CUSTOM);
++	input_set_capability(haptics->input_dev, EV_FF, FF_RUMBLE);
+ 	input_set_capability(haptics->input_dev, EV_FF, FF_CONSTANT);
+ 	input_set_capability(haptics->input_dev, EV_FF, FF_GAIN);
+ 

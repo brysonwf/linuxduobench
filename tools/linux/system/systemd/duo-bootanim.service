@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The Linux Duo Bench boot animation from early boot until duo-bootanim-done ends it before the display manager.
+[Unit]
+Description=Surface Duo boot animation
+DefaultDependencies=no
+After=local-fs.target systemd-udev-trigger.service
+Before=duo-bootanim-done.service display-manager.service sddm.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-bootanim start
+ExecStop=/usr/libexec/duo/duo-bootanim stop
+
+[Install]
+WantedBy=sysinit.target

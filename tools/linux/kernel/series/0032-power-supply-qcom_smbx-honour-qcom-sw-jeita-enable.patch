@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 09:55:42 -0500
+Subject: [PATCH] power: supply: qcom_smbx: honour qcom,sw-jeita-enable
+
+Platforms that limit charging by battery temperature in software (the downstream binding's qcom,sw-jeita-enable)
+need the PMIC's own JEITA off. On the Surface Duo the PMIC's battery thermistor input reads a bogus hot soft limit
+and keeps the charger disabled; Microsoft's downstream DT sets this property and runs JEITA from the two fuel
+gauges' temperatures instead.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/power/supply/qcom_smbx.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+index 1e2776f14..0ab98fb16 100644
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -970,6 +970,9 @@ static int smb_init_irq(struct smb_chip *chip, int *irq, const char *name,
+ 	return 0;
+ }
+ 
++/* JEITA_EN_CFG: bits 4:0 = hard limit + hot/cold soft-limit float-voltage/charge-current compensation */
++#define JEITA_EN_CFG				0x90
++
+ static int smb_probe(struct platform_device *pdev)
+ {
+ 	struct power_supply_config supply_config = {};
+@@ -1035,6 +1038,17 @@ static int smb_probe(struct platform_device *pdev)
+ 		return dev_err_probe(chip->dev, PTR_ERR(chip->chg_psy),
+ 				     "failed to register power supply\n");
+ 
++	/*
++	 * qcom,sw-jeita-enable (downstream binding name): the platform limits charging by battery temperature in
++	 * software, so the PMIC's own JEITA must not act. On the Surface Duo the PMIC's battery thermistor input
++	 * reads a bogus hot soft limit and would keep the charger disabled.
++	 */
++	if (of_property_read_bool(chip->dev->of_node, "qcom,sw-jeita-enable")) {
++		rc = regmap_update_bits(chip->regmap, chip->base + JEITA_EN_CFG, 0x1f, 0);
++		if (rc)
++			return dev_err_probe(chip->dev, rc, "failed to disable hardware JEITA\n");
++	}
++
+ 	rc = power_supply_get_battery_info(chip->chg_psy, &chip->batt_info);
+ 	if (rc)
+ 		return dev_err_probe(chip->dev, rc,

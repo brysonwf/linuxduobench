@@ -1,0 +1,68 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo sensors (docs/research/workbench/sensors.md): the SLPI sensor DSP + hexagonrpcd, so iio-sensor-proxy
+# (libssc) gets accelerometer (auto-rotate), light, proximity and compass:
+#  - vendor_a (inside super), dsp_a and persist mounted READ-ONLY
+#  - SLPI started with recovery off (its firmware is linked from modem_a by duo-modem)
+#  - hexagonrpcd's -R root built in RAM (/run/hexagon-root): the vendor sensor configs (light/proximity condition on an
+#    Android property replaced by an always-true soc_id one - RAM copy only), sns_reg config, a tmpfs COPY of the
+#    persist registry, socinfo (hw_platform "Surface", subtype 16 - this firmware requires it)
+#  - our patched hexagonrpcd from sda10 /opt/bin (musl build: needs the musl loader on glibc systems), else the
+#    distribution's, retried while the FastRPC sessions probe (EBUSY right after /dev/fastrpc-sdsp appears)
+# Off: duo.sensors=0. usage: duo-sensors start|stop
+DUO_NAME=duo-sensors; . /usr/libexec/duo/duo-lib.sh
+PID=/run/duo-hexagonrpcd.pid
+case "$1" in
+stop) daemon_stop $PID; exit 0 ;;
+start) ;;
+*) echo "usage: $0 start|stop"; exit 1 ;;
+esac
+grep -q 'duo.sensors=0' /proc/cmdline && exit 0
+
+H=/run/hexagon; mkdir -p $H/vendor $H/mnt/vendor/persist
+vendor_mount_at $H/vendor   # vendor_a, or the copy on a phone without Android (duo-lib.sh)
+D=$(part dsp_a); [ -n "$D" ] && [ -d $H/vendor/dsp ] && { mountpoint -q $H/vendor/dsp || mount -o ro /dev/$D $H/vendor/dsp; }
+Q=$(part persist); [ -n "$Q" ] && { mountpoint -q $H/mnt/vendor/persist || mount -o ro /dev/$Q $H/mnt/vendor/persist; }
+
+for r in /sys/class/remoteproc/remoteproc*; do
+	[ "$(cat $r/name 2>/dev/null)" = slpi ] || continue
+	echo disabled > $r/recovery 2>/dev/null
+	[ "$(cat $r/state)" = running ] || echo start > $r/state 2>/dev/null
+done
+
+R=/run/hexagon-root; rm -rf $R; mkdir -p $R/dsp $R/sensors $R/socinfo
+ln -s $H/vendor/dsp/sdsp $R/dsp/sdsp
+cp -r $H/vendor/etc/sensors/config $R/sensors/config
+rm -f $R/sensors/config/surfaceduo_txc_*_a12.json
+sed -i 's/"ro.build.version.release": *\[ *"11" *\]/"soc_id": [ "339" ]/' $R/sensors/config/surfaceduo_txc_*.json
+ln -s $H/vendor/etc/sensors/sns_reg_config $R/sensors/sns_reg.conf
+cp -a $H/mnt/vendor/persist/sensors/registry/registry $R/sensors/registry 2>/dev/null
+for f in soc_id revision; do cat /sys/devices/soc0/$f > $R/socinfo/$f; done
+echo Surface > $R/socinfo/hw_platform; echo MP_A > $R/socinfo/platform_subtype
+echo 16 > $R/socinfo/platform_subtype_id; echo 65536 > $R/socinfo/platform_version
+
+for i in $(seq 1 40); do [ -e /dev/fastrpc-sdsp ] && break; sleep 0.5; done
+HX=""; [ -x /opt/duo/bin/hexagonrpcd ] && HX=/opt/duo/bin/hexagonrpcd   # installed system (duo-debian-bootstrap)
+[ -n "$HX" ] || for m in /mnt/linux /mnt/duo-part; do [ -x $m/opt/bin/hexagonrpcd ] && HX=$m/opt/bin/hexagonrpcd && break; done
+if [ -z "$HX" ]; then
+	mkdir -p /mnt/linux; mountpoint -q /mnt/linux || mount -o ro /dev/$(part linux) /mnt/linux 2>/dev/null
+	[ -x /mnt/linux/opt/bin/hexagonrpcd ] && HX=/mnt/linux/opt/bin/hexagonrpcd || HX=$(command -v hexagonrpcd)
+fi
+for i in 1 2 3 4 5 6 7 8 9 10; do
+	daemon_start $PID /var/log/duo-hexagonrpcd.log "$HX" -f /dev/fastrpc-sdsp -d sdsp -s -R $R
+	sleep 3; daemon_alive $PID && break; sleep 2
+done
+daemon_alive $PID || { log "hexagonrpcd did not stay up (see /var/log/duo-hexagonrpcd.log)"; exit 1; }
+log "SLPI + hexagonrpcd up ($HX)"
+# The DSP's sensor service registers its sensors a few seconds after hexagonrpcd is up. iio-sensor-proxy (ordered after
+# this service) started inside that window half-initialises ("driver_set_polling: assertion 'sensor_device' failed")
+# and then reports light = 0 lux forever (2026-11-08, Debian). Wait until the light sensor answers before returning.
+if command -v ssccli > /dev/null; then
+	for i in $(seq 1 10); do
+		timeout 6 ssccli --sensor light --timeout 3 2>/dev/null | grep -q 'Light sensor measurement' && { log "sensors answer (light) after ${i} tries"; exit 0; }
+		sleep 1
+	done
+	log "light sensor did not answer within ~40 s - iio-sensor-proxy may start without it"
+else
+	sleep 5   # no libssc CLI (pmOS): a fixed settle time
+fi

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo modem DSP, Wi-Fi firmware (from the phone's modem_a) and MAC; low-power first, then ModemManager
+[Unit]
+Description=Surface Duo modem DSP, Wi-Fi firmware and MAC
+After=rmtfs.service tqftpserv.service duo-hw.service
+Wants=rmtfs.service tqftpserv.service
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/duo/duo-modem start
+
+[Install]
+WantedBy=multi-user.target

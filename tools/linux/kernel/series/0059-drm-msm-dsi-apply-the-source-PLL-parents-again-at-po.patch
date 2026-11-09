@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 17:26:40 -0500
+Subject: [PATCH] drm/msm/dsi: apply the source PLL parents again at power-on
+
+The DSI byte and pixel source clocks get the DSI PHY PLLs as parents from
+assigned-clock-parents, applied once when the DSI host probes. If the bootloader
+powered the PHY down but left the RCG selecting its PLL (the Surface Duo's ABL does
+this for DSI0), the switch fails at probe ("rcg didn't update its configuration",
+-EBUSY), the clock framework keeps the RCG on the XO and nothing tries again: at
+power-on the pixel clock rate cannot be set (-EINVAL) and the panel stays dark.
+
+The PHY PLL runs when msm_dsi_host_power_on() sets the link clock rates, so apply
+the defaults again there. It is a no-op when the parents are already right.
+
+Tested on a Surface Duo: booted by ABL both panels now light (DSI0 stayed dark);
+booted through UEFI nothing changes.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/dsi/dsi_host.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index c140c922d..a9fbc9d17 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/clk/clk-conf.h>
+ #include <linux/delay.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/err.h>
+@@ -2456,6 +2457,16 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
+ 	}
+ 
+ 	pm_runtime_get_sync(&msm_host->pdev->dev);
++	/*
++	 * The byte/pixel source clocks get their PHY PLL parents from assigned-clock-parents
++	 * at probe. If the PLL was off then (a bootloader that powered the DSI PHY down but
++	 * left the RCG selecting it), the switch fails and the RCG stays on the XO in the
++	 * clock framework. The PHY PLL runs now, so apply the parents again; this is a no-op
++	 * when they are already set.
++	 */
++	ret = of_clk_set_defaults(msm_host->pdev->dev.of_node, false);
++	if (ret)
++		pr_warn("%s: re-applying the source PLL failed: %d\n", __func__, ret);
+ 	ret = cfg_hnd->ops->link_clk_set_rate(msm_host);
+ 	if (!ret)
+ 		ret = cfg_hnd->ops->link_clk_enable(msm_host);

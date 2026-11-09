@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Wed, 29 Jul 2026 08:55:43 -0700
+Subject: [PATCH] drm/msm: Remove redundant SIZE_MAX check
+
+kmalloc() will already fail and return NULL if passed SIZE_MAX.
+
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/743082/
+Message-ID: <20260729155609.20190-7-robin.clark@oss.qualcomm.com>
+(cherry picked from commit 0369a2619c50bab5e9ef33e13f1def0c8aca25e8)
+---
+ drivers/gpu/drm/msm/msm_gem_submit.c | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_gem_submit.c b/drivers/gpu/drm/msm/msm_gem_submit.c
+index 2b6b5297f..db047f2e3 100644
+--- a/drivers/gpu/drm/msm/msm_gem_submit.c
++++ b/drivers/gpu/drm/msm/msm_gem_submit.c
+@@ -250,11 +250,6 @@ static int submit_lookup_cmds(struct msm_gem_submit *submit,
+ 
+ 		sz = array_size(submit_cmd.nr_relocs,
+ 				sizeof(struct drm_msm_gem_submit_reloc));
+-		/* check for overflow: */
+-		if (sz == SIZE_MAX) {
+-			ret = -ENOMEM;
+-			goto out;
+-		}
+ 		submit->cmd[i].relocs = kmalloc(sz, GFP_KERNEL | __GFP_NOWARN);
+ 		if (!submit->cmd[i].relocs) {
+ 			ret = -ENOMEM;

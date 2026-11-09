@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 18:18:32 -0500
+Subject: [PATCH] arm64: configs: duo.config: support a per-app firewall
+
+Enable what an application firewall such as OpenSnitch needs: NFQUEUE (nftables and xtables) to hold a
+new connection while the user decides, the proc connector and kprobes for its process monitor, UDP socket
+diag to match UDP flows to processes, and nft log.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ arch/arm64/configs/duo.config | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/arm64/configs/duo.config b/arch/arm64/configs/duo.config
+index f053df9e1..5156b55db 100644
+--- a/arch/arm64/configs/duo.config
++++ b/arch/arm64/configs/duo.config
+@@ -483,3 +483,14 @@ CONFIG_VIDEO_DW9719=m
+ # CONFIG_ARCH_VISCONTI is not set
+ # CONFIG_ARCH_XGENE is not set
+ # CONFIG_ARCH_ZYNQMP is not set
++# Per-app firewall (OpenSnitch): NFQUEUE to hold a new connection until the user answers, the proc connector and
++# kprobes for its process monitor, UDP socket diag for matching UDP flows, nft log for its audit rules
++CONFIG_NETFILTER_NETLINK_QUEUE=y
++CONFIG_NFT_QUEUE=y
++CONFIG_NETFILTER_XT_TARGET_NFQUEUE=y
++CONFIG_NFT_LOG=y
++CONFIG_CONNECTOR=y
++CONFIG_PROC_EVENTS=y
++CONFIG_KPROBES=y
++CONFIG_KPROBE_EVENTS=y
++CONFIG_INET_UDP_DIAG=y

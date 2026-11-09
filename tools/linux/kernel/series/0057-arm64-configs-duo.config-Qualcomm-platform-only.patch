@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 16:07:39 -0500
+Subject: [PATCH] arm64: configs: duo.config: Qualcomm platform only
+
+make defconfig enables every arm64 SoC platform; the Duo needs only ARCH_QCOM. With the 47 others off the kernel
+image shrinks from 76.9 MiB to 54.5 MiB (image_size), under the ~60 MiB the phone's own bootloader (ABL) accepts,
+and ~1460 other-vendor options go; every Duo-relevant option is unchanged. Tested on the phone: all drivers through
+UEFI (duo-health: 0 failures), and booted directly by ABL with fastboot boot.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ arch/arm64/configs/duo.config | 50 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/arch/arm64/configs/duo.config b/arch/arm64/configs/duo.config
+index 90ea3a6d2..f053df9e1 100644
+--- a/arch/arm64/configs/duo.config
++++ b/arch/arm64/configs/duo.config
+@@ -433,3 +433,53 @@ CONFIG_USB_USBNET=y
+ CONFIG_USB_XHCI_PCI_RENESAS=y
+ CONFIG_VETH=y
+ CONFIG_VIDEO_DW9719=m
++
++# Qualcomm SoCs only: the other platforms' drivers made the image too big for the phone's bootloader (ABL)
++# CONFIG_ARCH_ACTIONS is not set
++# CONFIG_ARCH_AIROHA is not set
++# CONFIG_ARCH_SUNXI is not set
++# CONFIG_ARCH_ALPINE is not set
++# CONFIG_ARCH_APPLE is not set
++# CONFIG_ARCH_ARTPEC is not set
++# CONFIG_ARCH_AXIADO is not set
++# CONFIG_ARCH_BCM2835 is not set
++# CONFIG_ARCH_BCM_IPROC is not set
++# CONFIG_ARCH_BCMBCA is not set
++# CONFIG_ARCH_BRCMSTB is not set
++# CONFIG_ARCH_BERLIN is not set
++# CONFIG_ARCH_BLAIZE is not set
++# CONFIG_ARCH_BST is not set
++# CONFIG_ARCH_CIX is not set
++# CONFIG_ARCH_EXYNOS is not set
++# CONFIG_ARCH_K3 is not set
++# CONFIG_ARCH_LG1K is not set
++# CONFIG_ARCH_HISI is not set
++# CONFIG_ARCH_KEEMBAY is not set
++# CONFIG_ARCH_MEDIATEK is not set
++# CONFIG_ARCH_MESON is not set
++# CONFIG_ARCH_MICROCHIP is not set
++# CONFIG_ARCH_SPARX5 is not set
++# CONFIG_ARCH_MVEBU is not set
++# CONFIG_ARCH_LAYERSCAPE is not set
++# CONFIG_ARCH_MXC is not set
++# CONFIG_ARCH_S32 is not set
++# CONFIG_ARCH_MA35 is not set
++# CONFIG_ARCH_NPCM is not set
++# CONFIG_ARCH_REALTEK is not set
++# CONFIG_ARCH_RENESAS is not set
++# CONFIG_ARCH_ROCKCHIP is not set
++# CONFIG_ARCH_SEATTLE is not set
++# CONFIG_ARCH_INTEL_SOCFPGA is not set
++# CONFIG_ARCH_SOPHGO is not set
++# CONFIG_ARCH_STM32 is not set
++# CONFIG_ARCH_SYNQUACER is not set
++# CONFIG_ARCH_TEGRA is not set
++# CONFIG_ARCH_TESLA_FSD is not set
++# CONFIG_ARCH_SPRD is not set
++# CONFIG_ARCH_THUNDER is not set
++# CONFIG_ARCH_THUNDER2 is not set
++# CONFIG_ARCH_UNIPHIER is not set
++# CONFIG_ARCH_VEXPRESS is not set
++# CONFIG_ARCH_VISCONTI is not set
++# CONFIG_ARCH_XGENE is not set
++# CONFIG_ARCH_ZYNQMP is not set

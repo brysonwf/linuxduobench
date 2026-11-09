@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 17:58:57 -0500
+Subject: [PATCH] arm64: dts: qcom: sm8150-microsoft-surface-duo: load the ADSP
+ firmware from the phone
+
+Name the audio DSP's split firmware (adsp.mdt + adsp.bNN) as it is stored on the phone's own
+modem_a partition, like the modem, sensor and compute DSPs already do, instead of a converted
+adsp.mbn that had to be built on a PC and carried in the initramfs. The partition is mounted by
+userspace, after the kernel's first start attempt; the initramfs starts the ADSP once the firmware
+is reachable.
+
+Tested on a Surface Duo: booted through UEFI and by ABL, the ADSP comes up at ~3.7 s and the sound
+card registers; postmarketOS duo-health reports no failures.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ .../dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
+index 98aad4269..f404c0798 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150-microsoft-surface-duo-workbench.dtsi
+@@ -289,6 +289,15 @@ &remoteproc_cdsp {
+ 	firmware-name = "qcom/sm8150/microsoft/cdsp.mdt";
+ };
+ 
++/*
++ * Audio DSP: split firmware from the phone's modem_a partition (image/adsp.mdt + .bNN), like the other DSPs. It is
++ * not reachable when the kernel first tries (~0.5 s), so the initramfs links modem_a and starts the ADSP itself.
++ * Nothing proprietary has to be converted or carried in the initramfs.
++ */
++&remoteproc_adsp {
++	firmware-name = "qcom/sm8150/microsoft/adsp.mdt";
++};
++
+ /* BT UART pins (QUP SE13: gpio43 CTS, 44 RTS, 45 TX, 46 RX) — uart13 has no pinctrl in sm8150.dtsi; without these the
+  * pins are never muxed and every BT command times out (2026-11-03). States copied from the SM8150-HDK WCN399x patch. */
+ &tlmm {

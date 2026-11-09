@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 09:08:32 -0500
+Subject: [PATCH] arm64: configs: duo: policy routing for Android containers
+
+Waydroid runs Android in a container on the Surface Duo. Android's netd
+keeps the routes of each network in a routing table of its own and
+selects it with fwmark rules; without IP_MULTIPLE_TABLES every `ip rule`
+call fails with EOPNOTSUPP and Android never gets a default route, so
+apps see "Network is unreachable" although DHCP worked.
+
+Enable policy routing for IPv4 and IPv6 and the mark/connmark/owner
+matches netd uses.
+
+This patch was written by Claude (Anthropic's AI assistant) under the
+direction of Bryson, who tested it on his Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ arch/arm64/configs/duo.config | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/configs/duo.config b/arch/arm64/configs/duo.config
+index e30896524..dc98a33a0 100644
+--- a/arch/arm64/configs/duo.config
++++ b/arch/arm64/configs/duo.config
+@@ -504,3 +504,12 @@ CONFIG_CRYPTO_XTS=y
+ CONFIG_CRYPTO_ESSIV=y
+ CONFIG_CRYPTO_USER_API_HASH=y
+ CONFIG_CRYPTO_USER_API_SKCIPHER=y
++# Waydroid (Android apps on Debian, 2026-11-08): Android's netd puts every network's routes in its own table chosen by
++# fwmark rules - without policy routing `ip rule` fails ("Operation not supported") and Android has no default route
++CONFIG_IP_ADVANCED_ROUTER=y
++CONFIG_IP_MULTIPLE_TABLES=y
++CONFIG_IPV6_MULTIPLE_TABLES=y
++CONFIG_NETFILTER_XT_MATCH_MARK=y
++CONFIG_NETFILTER_XT_TARGET_MARK=y
++CONFIG_NETFILTER_XT_TARGET_CONNMARK=y
++CONFIG_NETFILTER_XT_MATCH_OWNER=y

@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Amit Pundir <amit.pundir@linaro.org>
+Date: Tue, 7 Apr 2026 08:43:54 +0200
+Subject: [PATCH] dt-bindings: wireless: ath10k: Add quirk to skip host cap QMI
+ requests
+
+Some firmware versions do not support the host-capability QMI request.
+Since this request occurs before firmware and board files are loaded,
+the quirk cannot be expressed in the firmware itself and must be described
+in the device tree.
+
+Signed-off-by: Amit Pundir <amit.pundir@linaro.org>
+Co-developed-by: David Heidelberg <david@ixit.cz>
+Signed-off-by: David Heidelberg <david@ixit.cz>
+Reviewed-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+---
+ .../devicetree/bindings/net/wireless/qcom,ath10k.yaml | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/net/wireless/qcom,ath10k.yaml b/Documentation/devicetree/bindings/net/wireless/qcom,ath10k.yaml
+index f2440d39b..c21d66c7c 100644
+--- a/Documentation/devicetree/bindings/net/wireless/qcom,ath10k.yaml
++++ b/Documentation/devicetree/bindings/net/wireless/qcom,ath10k.yaml
+@@ -171,6 +171,12 @@ properties:
+       Quirk specifying that the firmware expects the 8bit version
+       of the host capability QMI request
+ 
++  qcom,snoc-host-cap-skip-quirk:
++    type: boolean
++    description:
++      Quirk specifying that the firmware wants to skip the host
++      capability QMI request
++
+   qcom,xo-cal-data:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     description:
+@@ -292,6 +298,11 @@ allOf:
+       required:
+         - interrupts
+ 
++  - not:
++      required:
++        - qcom,snoc-host-cap-8bit-quirk
++        - qcom,snoc-host-cap-skip-quirk
++
+ examples:
+   # SNoC
+   - |

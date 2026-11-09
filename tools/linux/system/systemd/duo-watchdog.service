@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo hardware watchdog with USB/SSH/UFS health checks (/usr/libexec/duo/duo-watchdog -> duo-wdt-feeder).
+# Takes /dev/watchdog over from the initramfs bridge feeder. Off: duo.nowdt=1.
+[Unit]
+Description=Surface Duo hardware watchdog
+DefaultDependencies=no
+After=local-fs.target
+Before=ssh.service display-manager.service NetworkManager.service
+ConditionKernelCommandLine=!duo.nowdt=1
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/duo/duo-watchdog start
+StandardOutput=append:/var/log/duo-watchdog.log
+StandardError=append:/var/log/duo-watchdog.log
+# never restart into a second opener while the first still holds the device; a dead feeder = the watchdog resets
+Restart=no
+
+[Install]
+WantedBy=sysinit.target

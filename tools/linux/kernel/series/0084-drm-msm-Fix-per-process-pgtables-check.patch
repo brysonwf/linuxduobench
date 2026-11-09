@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rob Clark <robin.clark@oss.qualcomm.com>
+Date: Wed, 29 Jul 2026 08:55:53 -0700
+Subject: [PATCH] drm/msm: Fix per-process-pgtables check
+
+ctx->vm should not be inialized yet (or if it has, an error is returned
+immediately following this check), so this isn't a valid way to check
+for per-process-pgtable support.
+
+Instead just check if create_private_vm() is supported.
+
+Reported-by: Sashiko <sashiko-bot@kernel.org>
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/743096/
+Message-ID: <20260729155609.20190-17-robin.clark@oss.qualcomm.com>
+(cherry picked from commit 1b8029394fb77adde9c494a3acd40b0b39793b55)
+---
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index c37a48572..29b935461 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -506,7 +506,7 @@ int adreno_set_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 		guard(rwsem_read)(&ctx->ctxlock);
+ 
+ 		/* We can only support VM_BIND with per-process pgtables: */
+-		if (ctx->vm == gpu->vm)
++		if (!gpu->funcs->create_private_vm)
+ 			return UERR(EINVAL, drm, "requires per-process pgtables");
+ 
+ 		/*

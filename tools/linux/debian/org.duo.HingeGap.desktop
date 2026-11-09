@@ -1,0 +1,10 @@
+[Desktop Entry]
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Surface Duo, Debian/Plasma (2026-11-08, Android parity): the right panel sits one hinge to the right of the left one,
+# like Android (config_mainBuiltInHingeMaskWidth = 84 px = 33 logical px at scale 2.55), so the pointer and a window
+# spanning both screens skip the hinge instead of running straight on. Touch follows (per-output mapping).
+Type=Application
+Name=Duo hinge gap
+Exec=kscreen-doctor output.DSI-2.position.563,0
+NoDisplay=true
+X-KDE-autostart-phase=1

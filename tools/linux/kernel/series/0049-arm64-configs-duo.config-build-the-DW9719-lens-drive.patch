@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 10:10:08 -0500
+Subject: [PATCH] arm64: configs: duo.config: build the DW9719 lens driver
+
+The IMX351 module's autofocus actuator (Dongwoon DW9800K, driven by dw9719). It was built out of tree before.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ arch/arm64/configs/duo.config | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/duo.config b/arch/arm64/configs/duo.config
+index e842f3d67..e003ff4f8 100644
+--- a/arch/arm64/configs/duo.config
++++ b/arch/arm64/configs/duo.config
+@@ -721,3 +721,4 @@ CONFIG_USB_U_SERIAL=y
+ CONFIG_USB_XHCI_PCI_RENESAS=y
+ # CONFIG_USER_EVENTS is not set
+ CONFIG_VETH=y
++CONFIG_VIDEO_DW9719=m

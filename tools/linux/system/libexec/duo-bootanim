@@ -1,0 +1,38 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Linux Duo Bench boot animation (the static DRM player /usr/local/bin/duo-bootanim, frames in /usr/share/duo/bootanim;
+# tools/linux/bootanim). The RAM init hands over to the installed system at ~6 s, before the animation's window, so the
+# system plays it itself from early boot while its services start; "done" ends it before the display manager starts,
+# because the player holds DRM master and the compositor needs the panels.
+# The player ENDS by design (done flag / 40 s): it runs detached (setsid), never supervised by the init system (an
+# OpenRC-supervised player shows "crashed" on every boot). The pid file is only for stop/done.
+# usage: duo-bootanim start|stop|done        (off: duo.nosplash=1)
+DUO_NAME=duo-bootanim; . /usr/libexec/duo/duo-lib.sh
+PLAYER=/usr/local/bin/duo-bootanim; FRAMES=/usr/share/duo/bootanim; PID=/run/duo-bootanim.pid
+
+end_anim() {
+	# the done flag: the player shows its lamp-on end frame for 1.5 s and exits; wait at most 4 s
+	touch /run/duo-boot-done
+	P=$(cat $PID 2>/dev/null)
+	if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+		for i in $(seq 1 40); do kill -0 "$P" 2>/dev/null || break; sleep 0.1; done
+		kill "$P" 2>/dev/null
+	fi
+	rm -f $PID
+}
+
+case "$1" in
+start)
+	[ -x $PLAYER ] && [ -f $FRAMES/seq.txt ] || { log "no boot animation installed"; exit 0; }
+	grep -q duo.nosplash=1 /proc/cmdline && exit 0
+	# never remove the done flag here (/run is fresh each boot): on 2026-11-07 "done" ran FIRST, an rm here undid it,
+	# the player kept the panels for 40 s and the GUI failed. If the GUI is already on its way, don't start.
+	[ -e /run/duo-boot-done ] && { log "boot already done: no animation"; exit 0; }
+	# hinge angle: the sensors DSP is not up yet -> the art's 90 degree circle; at most 40 s
+	setsid $PLAYER $FRAMES 90 40 > /var/log/duo-bootanim.log 2>&1 < /dev/null &
+	echo $! > $PID ;;
+stop|done)
+	end_anim ;;
+*)	echo "usage: $0 start|stop|done"; exit 1 ;;
+esac
+exit 0

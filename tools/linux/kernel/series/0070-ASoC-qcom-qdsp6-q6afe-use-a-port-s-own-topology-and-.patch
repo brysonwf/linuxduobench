@@ -1,0 +1,208 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 22:22:58 -0500
+Subject: [PATCH] ASoC: qcom: qdsp6: q6afe: use a port's own topology and
+ calibration
+
+Speaker protection and similar per-port processing live in AFE topologies. Let a dai node carry
+"qcom,afe-topology" and "qcom,afe-calibration": when the custom topologies are registered, the port is
+started with AFE_PARAM_ID_SET_TOPOLOGY and the calibration blocks (AFE_PORT_CMD_SET_PARAM_V2, in-band)
+first; otherwise it starts as before.
+
+Tested on a Surface Duo: the speaker port starts with the feed-forward speaker protection topology
+0x1001025e and its 1504-byte calibration, status 0.
+
+This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
+tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ sound/soc/qcom/qdsp6/q6afe-dai.c | 33 +++++++++++++++++
+ sound/soc/qcom/qdsp6/q6afe.c     | 62 ++++++++++++++++++++++++++++++++
+ sound/soc/qcom/qdsp6/q6afe.h     |  1 +
+ 3 files changed, 96 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
+index 0f47aadaa..cd9440271 100644
+--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
+@@ -9,12 +9,14 @@
+ #include <linux/device.h>
+ #include <linux/platform_device.h>
+ #include <linux/slab.h>
++#include <linux/firmware.h>
+ #include <sound/pcm.h>
+ #include <sound/soc.h>
+ #include <sound/pcm_params.h>
+ #include "q6dsp-lpass-ports.h"
+ #include "q6dsp-common.h"
+ #include "q6afe.h"
++#include "q6core.h"
+ 
+ 
+ struct q6afe_dai_priv_data {
+@@ -25,6 +27,11 @@ struct q6afe_dai_priv_data {
+ 	uint32_t invert_sync;
+ 	uint32_t data_delay;
+ 	uint32_t data_align;
++	/* the device's own AFE topology + calibration (custom topologies registered by q6routing) */
++	uint32_t afe_topology;
++	const char *afe_cal_name;
++	void *afe_cal;
++	size_t afe_cal_size;
+ };
+ 
+ struct q6afe_dai_data {
+@@ -384,6 +391,27 @@ static void q6afe_dai_shutdown(struct snd_pcm_substream *substream,
+ 
+ }
+ 
++static void q6afe_dai_set_tuning(struct snd_soc_dai *dai, struct q6afe_dai_data *dai_data)
++{
++	struct q6afe_dai_priv_data *priv = &dai_data->priv[dai->id];
++	const struct firmware *fw;
++
++	if (!priv->afe_topology)
++		return;
++	if (!q6core_custom_topologies_ready()) {
++		q6afe_port_set_tuning(dai_data->port[dai->id], 0, NULL, 0);
++		return;
++	}
++	if (!priv->afe_cal && priv->afe_cal_name &&
++	    !request_firmware_direct(&fw, priv->afe_cal_name, dai->dev)) {
++		priv->afe_cal = devm_kmemdup(dai->dev, fw->data, fw->size, GFP_KERNEL);
++		priv->afe_cal_size = priv->afe_cal ? fw->size : 0;
++		release_firmware(fw);
++	}
++	q6afe_port_set_tuning(dai_data->port[dai->id], priv->afe_topology, priv->afe_cal,
++			      priv->afe_cal_size);
++}
++
+ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 		struct snd_soc_dai *dai)
+ {
+@@ -435,6 +463,7 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
+ 		return -EINVAL;
+ 	}
+ 
++	q6afe_dai_set_tuning(dai, dai_data);
+ 	rc = q6afe_port_start(dai_data->port[dai->id]);
+ 	if (rc < 0) {
+ 		dev_err(dai->dev, "fail to start AFE port %x\n", dai->id);
+@@ -1035,6 +1064,10 @@ static void of_q6afe_parse_dai_data(struct device *dev,
+ 			continue;
+ 		}
+ 
++		priv = &data->priv[id];
++		of_property_read_u32(node, "qcom,afe-topology", &priv->afe_topology);
++		of_property_read_string(node, "qcom,afe-calibration", &priv->afe_cal_name);
++
+ 		switch (id) {
+ 		/* MI2S specific properties */
+ 		case QUINARY_MI2S_RX ... QUINARY_MI2S_TX:
+diff --git a/sound/soc/qcom/qdsp6/q6afe.c b/sound/soc/qcom/qdsp6/q6afe.c
+index 0b01fc9e1..414560957 100644
+--- a/sound/soc/qcom/qdsp6/q6afe.c
++++ b/sound/soc/qcom/qdsp6/q6afe.c
+@@ -28,6 +28,8 @@
+ #define AFE_PORT_CMD_DEVICE_START	0x000100E5
+ #define AFE_PORT_CMD_DEVICE_STOP	0x000100E6
+ #define AFE_PORT_CMD_SET_PARAM_V2	0x000100EF
++#define AFE_PARAM_ID_SET_TOPOLOGY	0x0001025A
++#define AFE_API_VERSION_TOPOLOGY_V1	0x1
+ #define AFE_SVC_CMD_SET_PARAM		0x000100f3
+ #define AFE_PORT_CMDRSP_GET_PARAM_V2	0x00010106
+ #define AFE_PARAM_ID_HDMI_CONFIG	0x00010210
+@@ -641,6 +643,9 @@ struct q6afe_port {
+ 	struct q6afe *afe;
+ 	struct kref refcount;
+ 	struct list_head node;
++	u32 topology;
++	const void *cal;
++	size_t cal_size;
+ };
+ 
+ struct afe_cmd_remote_lpass_core_hw_vote_request {
+@@ -1659,6 +1664,60 @@ EXPORT_SYMBOL_GPL(q6afe_cdc_dma_port_prepare);
+  *
+  * Return: Will be an negative on packet size on success.
+  */
++/* send a ready-made set-param payload (repeated afe_port_param_data_v2 + data) in-band */
++static int q6afe_port_set_param_blob(struct q6afe_port *port, const void *data, size_t size)
++{
++	struct afe_port_cmd_set_param_v2 *param;
++	int pkt_size = APR_HDR_SIZE + sizeof(*param) + size;
++	void *p __free(kfree) = kzalloc(pkt_size, GFP_KERNEL);
++	struct apr_pkt *pkt = p;
++
++	if (!p)
++		return -ENOMEM;
++	param = p + APR_HDR_SIZE;
++	memcpy(p + APR_HDR_SIZE + sizeof(*param), data, size);
++	pkt->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
++	pkt->hdr.pkt_size = pkt_size;
++	pkt->hdr.token = port->token;
++	pkt->hdr.opcode = AFE_PORT_CMD_SET_PARAM_V2;
++	param->port_id = port->id;
++	param->payload_size = size;
++
++	return afe_apr_send_pkt(port->afe, pkt, port, AFE_PORT_CMD_SET_PARAM_V2);
++}
++
++/**
++ * q6afe_port_set_tuning() - use a custom topology and calibration on the next port start
++ *
++ * @port: Instance of afe port
++ * @topology: custom AFE topology id (registered with q6core), 0 for the default
++ * @cal: calibration: repeated module id, param id, u16 size, u16 0, data padded to 4 bytes (or NULL)
++ * @cal_size: size of @cal
++ *
++ * @cal must stay valid while the port is in use.
++ */
++void q6afe_port_set_tuning(struct q6afe_port *port, u32 topology, const void *cal, size_t cal_size)
++{
++	port->topology = topology;
++	port->cal = cal;
++	port->cal_size = cal_size;
++}
++EXPORT_SYMBOL_GPL(q6afe_port_set_tuning);
++
++static void q6afe_port_send_tuning(struct q6afe_port *port)
++{
++	struct { u32 minor_version, topology_id; } __packed topo = {
++		AFE_API_VERSION_TOPOLOGY_V1, port->topology };
++	int ret;
++
++	ret = q6afe_port_set_param_v2(port, &topo, AFE_PARAM_ID_SET_TOPOLOGY,
++				      AFE_MODULE_AUDIO_DEV_INTERFACE, sizeof(topo));
++	if (!ret && port->cal)
++		ret = q6afe_port_set_param_blob(port, port->cal, port->cal_size);
++	if (ret)
++		dev_err(port->afe->dev, "AFE port 0x%x tuning not applied: %d\n", port->id, ret);
++}
++
+ int q6afe_port_start(struct q6afe_port *port)
+ {
+ 	struct afe_port_cmd_device_start *start;
+@@ -1669,6 +1728,9 @@ int q6afe_port_start(struct q6afe_port *port)
+ 	int pkt_size;
+ 	void *p __free(kfree) = NULL;
+ 
++	if (port->topology)
++		q6afe_port_send_tuning(port);
++
+ 	ret  = q6afe_port_set_param_v2(port, &port->port_cfg, param_id,
+ 				       AFE_MODULE_AUDIO_DEV_INTERFACE,
+ 				       sizeof(port->port_cfg));
+diff --git a/sound/soc/qcom/qdsp6/q6afe.h b/sound/soc/qcom/qdsp6/q6afe.h
+index a29abe4ce..62f6fc801 100644
+--- a/sound/soc/qcom/qdsp6/q6afe.h
++++ b/sound/soc/qcom/qdsp6/q6afe.h
+@@ -247,6 +247,7 @@ struct q6afe_port;
+ 
+ struct q6afe_port *q6afe_port_get_from_id(struct device *dev, int id);
+ int q6afe_port_start(struct q6afe_port *port);
++void q6afe_port_set_tuning(struct q6afe_port *port, u32 topology, const void *cal, size_t cal_size);
+ int q6afe_port_stop(struct q6afe_port *port);
+ void q6afe_port_put(struct q6afe_port *port);
+ int q6afe_get_port_id(int index);
