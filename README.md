@@ -8,8 +8,9 @@ Mainline Linux drivers and a Debian system layer for the **Microsoft Surface Duo
 > **Source-only developer release.** This is a kernel patch series, the userspace that drives the Duo's hardware,
 > and the scripts that build a RAM-booted Debian image. **There is no installer here, on purpose.** Our installer
 > wrote the phone's boot partitions and changed its bootloader state. On our only stock test phone that run ended
-> with a phone that boots no image at all, not even Microsoft's own (fastboot only, cause unknown). Until that is
-> understood, nothing in this repository writes a phone's boot partitions, partition table or lock state.
+> with a phone that boots no image at all, not even Microsoft's own (fastboot only). We know which steps did it, not
+> yet which internal state they broke. Until we do, nothing in this repository writes a phone's boot partitions,
+> partition table or lock state.
 > Booting the image described in [INSTALL.md](INSTALL.md) is RAM-only: `fastboot boot` changes nothing on the phone.
 
 **None of the code that bricked our phone is in this repository.** The brick was caused by our installer, which:
