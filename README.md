@@ -2,7 +2,8 @@
 
 **Working mainline Linux 6.19 on the Microsoft Surface Duo (1st gen, SM8150).**
 
-> **Not actively maintained.** Forks and patches welcome. Open items and notes are in [`docs/`](docs/README.md).
+> **Temporarily not maintained** - our test phone is bricked, and we're looking for a cheap Surface Duo to continue.
+> Forks and patches welcome. Open items and notes are in [`docs/`](docs/README.md).
 
 ## Drivers only
 Kernel patches, hardware services, Debian setup, and scripts to build a RAM boot image (`fastboot boot` - nothing is
