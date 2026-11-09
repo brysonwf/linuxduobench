@@ -43,6 +43,12 @@ Mainline v6.19 + 90 patches, tested on one phone:
 - **Power key** - `qcom-pon` + `pm8941-pwrkey`
 - **CPU** - all 8 cores incl. the 2.84 GHz prime core; suspend (s2idle)
 
+**postmarketOS came first.** postmarketOS v25.06 was the first full OS on this kernel: Phosh on both screens, every
+driver above working, and our `duo-health` check (31 tests) passing with 0 failures. It booted both through UEFI and
+straight from the phone's own bootloader. We then moved to Debian 13, for KDE Plasma Mobile's dual-screen support out
+of the box and desktop apps such as VS Code. Both ran the same kernel and the same distro-neutral hardware services
+(`tools/linux/system`).
+
 On top: Debian 13 "trixie" with KDE Plasma Mobile on both screens, Waydroid for Android apps, PipeWire audio,
 libcamera, and our own apps - [Hingeboard](https://github.com/brysonwf/hingeboard) (laptop mode: an on-screen keyboard
 on one screen, a trackpad desktop on the other) and [Porchlight](https://github.com/brysonwf/porchlight) (an
