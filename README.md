@@ -4,7 +4,7 @@
 
 ### postmarketOS and Debian both run on it, on both screens.
 
-First postmarketOS with Phosh, then Debian 13 with KDE Plasma Mobile - real Linux distributions on Microsoft's
+First postmarketOS with Phosh (we added the second screen to it), then Debian 13 with KDE Plasma Mobile - real Linux distributions on Microsoft's
 dual-screen phone (Qualcomm **Snapdragon 855 / SM8150**, codename "epsilon"), on a mainline kernel with no Android and
 no vendor kernel. Both AMOLED screens, touch, the Adreno 640 GPU, the speaker, the camera and the hinge sensor work.
 
@@ -44,8 +44,10 @@ Mainline v6.19 + 90 patches, tested on one phone:
 - **Power key** - `qcom-pon` + `pm8941-pwrkey`
 - **CPU** - all 8 cores incl. the 2.84 GHz prime core; suspend (s2idle)
 
-**postmarketOS came first.** postmarketOS v25.06 was the first full OS on this kernel: Phosh on both screens, every
-driver above working, and our `duo-health` check (31 tests) passing with 0 failures. It booted both through UEFI and
+**postmarketOS came first.** postmarketOS v25.06 was the first full OS on this kernel. **We added the Duo's second
+screen to Phosh:** both panels as outputs of its compositor (phoc), each touchscreen mapped to its own panel, so apps
+run and respond to touch on either screen (Phosh's own top bar and app grid stay on one screen; neither Phosh nor
+Plasma Mobile can span them yet). Every driver above worked, and our `duo-health` check (31 tests) passing with 0 failures. It booted both through UEFI and
 straight from the phone's own bootloader. We then moved to Debian 13, for KDE Plasma Mobile's dual-screen support out
 of the box and desktop apps such as VS Code. Both ran the same kernel and the same distro-neutral hardware services
 (`tools/linux/system`).
