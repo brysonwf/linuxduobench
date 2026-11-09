@@ -50,6 +50,11 @@ phone's own `modem_a` partition. Speaker tuning and camera tables are generated 
 Hardware parameters (panel init, charger and thermal limits) were derived from the phone's own configuration. No
 Microsoft files are included.
 
+## Research notes
+[`docs/`](docs/README.md) holds the lab notebook behind every driver: how the hardware works, what Android and
+Microsoft do, and what failed and what worked. It also has the decoded speaker register traces, and the Windows-side
+research most useful to a Windows driver port (WOA-Project), e.g. the WCD9340/WSA8815 speaker path.
+
 ## License
 - Kernel code (the patches in `tools/linux/kernel/series`, and the camera driver): **GPL-2.0-only**, like Linux.
   Upstream patches keep their authors and headers.
