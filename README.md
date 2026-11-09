@@ -4,85 +4,67 @@
 
 ### postmarketOS and Debian both run on it, on both screens.
 
-First postmarketOS with Phosh (we added the second screen to it), then Debian 13 with KDE Plasma Mobile - real Linux distributions on Microsoft's
-dual-screen phone (Qualcomm **Snapdragon 855 / SM8150**, codename "epsilon"), on a mainline kernel with no Android and
-no vendor kernel. Both AMOLED screens, touch, the Adreno 640 GPU, the speaker, the camera and the hinge sensor work.
+postmarketOS (Phosh) first, then Debian 13 (KDE Plasma Mobile), on a mainline kernel - no Android, no vendor kernel.
+Qualcomm Snapdragon 855 / SM8150, codename "epsilon".
 
-> **Temporarily not maintained** - our test phone is bricked, and we're looking for a cheap Surface Duo to continue.
-> Forks and patches welcome. Open items and notes are in [`docs/`](docs/README.md).
+> **Temporarily not maintained** - our test phone is bricked; we're looking for a cheap Surface Duo to continue.
+> Forks and patches welcome. Open items and notes: [`docs/`](docs/README.md).
 
 ## Drivers only
-A Linux kernel patch series (device tree, DSI panel, HID-over-SPI touch, audio, camera, charger and more), the
-systemd services that bring the Duo's hardware up, a Debian setup, and scripts to build a RAM boot image for the
-phone's own Qualcomm bootloader (ABL, `fastboot boot` - nothing is written to the phone). **No installer.** Nothing
-here writes boot partitions, the partition table or the bootloader lock state.
+Kernel patch series (device tree, DSI panel, HID-over-SPI touch, audio, camera, charger...), systemd hardware
+services, a Debian setup, and a RAM boot image for the phone's Qualcomm bootloader (ABL, `fastboot boot`).
+**No installer** - nothing here writes boot partitions, the partition table or the lock state.
 
 ## Continuing the driver work: use the RAM boot image
-The RAM boot image was built to **iterate fast**, and it's what to use to continue the driver work. Build a kernel,
-`fastboot boot` it, test over SSH on the USB cable, power off, repeat. Each try runs from RAM, so a bad kernel costs a
-reboot, never the phone. That's how every driver here was brought up. A prebuilt image is on the **Releases** page;
-steps (prebuilt or your own build): [INSTALL.md](INSTALL.md).
+Built to **iterate fast**: build a kernel, `fastboot boot` it, test over SSH on the USB cable, power off, repeat. A bad
+kernel costs a reboot, never the phone. Prebuilt image: **Releases** page. Steps: [INSTALL.md](INSTALL.md).
 
-## What works
-Mainline v6.19 + 90 patches, tested on one phone:
-- **Displays** - `panel-microsoft-surface-duo` (ours) on msm DSI/DPU with DSC
+## What works (mainline v6.19 + 90 patches, one phone)
+- **Displays** - `panel-microsoft-surface-duo` (ours), msm DSI/DPU with DSC
 - **Touch** - `spi-hid-duo` (Microsoft's spi-hid, ported) + iptsd
-- **GPU** - msm Adreno 640 + Mesa freedreno/Turnip
+- **GPU** - msm Adreno 640 + Mesa freedreno (OpenGL ES) / Turnip (Vulkan)
 - **HDMI out (USB-C dock)** - msm DisplayPort + `qcom-pmic-typec` + FSA4480
 - **Speaker** - `wcd934x` codec + `wsa881x` amp + q6 ADSP (Microsoft's tuning)
 - **Microphones** - `wcd934x` DMICs
 - **Camera** - `imx351` (ours) + `qcom-camss` + `dw9719` autofocus + `leds-qcom-flash`
 - **Sensors (accel, compass, hinge, light/proximity)** - SLPI via `fastrpc` + hexagonrpcd + libssc
-- **Wi-Fi** - `ath10k` (WCN3990)
-- **Bluetooth** - `hci_qca` (WCN3990)
+- **Wi-Fi / Bluetooth** - `ath10k` / `hci_qca` (WCN3990)
 - **Modem / mobile data** - `qcom_q6v5_mss` + ModemManager / `ipa` v4.1
-- **Charger** - `qcom_smbx`
-- **Fuel gauges** - `bq27xxx` (two BQ27742)
+- **Charger / fuel gauges** - `qcom_smbx` / `bq27xxx` (two BQ27742)
 - **Storage** - `ufs-qcom`
 - **Video decode/encode** - `venus`
 - **Haptics** - `da7280` (force feedback)
 - **Power key** - `qcom-pon` + `pm8941-pwrkey`
 - **CPU** - all 8 cores incl. the 2.84 GHz prime core; suspend (s2idle)
 
-**postmarketOS came first.** postmarketOS v25.06 was the first full OS on this kernel. **We added the Duo's second
-screen to Phosh:** both panels as outputs of its compositor (phoc), each touchscreen mapped to its own panel, so apps
-run and respond to touch on either screen (Phosh's own top bar and app grid stay on one screen; neither Phosh nor
-Plasma Mobile can span them yet). Every driver above worked, and our `duo-health` check (31 tests) passed with 0 failures. It booted both through UEFI and
-straight from the phone's own bootloader. We then moved to Debian 13, for KDE Plasma Mobile's dual-screen support out
-of the box and desktop apps such as VS Code. Both ran the same kernel and the same distro-neutral hardware services
-(`tools/linux/system`).
-
-On top: Debian 13 "trixie" with KDE Plasma Mobile on both screens, Waydroid for Android apps, PipeWire audio,
-libcamera, and our own apps - [Hingeboard](https://github.com/brysonwf/hingeboard) (laptop mode: an on-screen keyboard
-on one screen, a trackpad desktop on the other) and [Porchlight](https://github.com/brysonwf/porchlight) (an
-OpenSnitch firewall UI). postmarketOS with Phosh ran on both screens too.
-
-**GPU:** Mesa freedreno (OpenGL ES) and Turnip (Vulkan) on the Adreno 640. glmark2 at 1587x2118: terrain 74 fps,
-refract 59, shadow 333, jellyfish 387, ideas 703; vkcube 59 fps. Ten minutes of the heaviest scenes held 585 MHz at
-58 °C with no throttling.
-
 **Not yet:** GPS fix, pen, calls/SMS.
+**Fingerprint (partial, experimental):** pending `qcom_scm` patches + the `duo_qsee` module - the FPC1020 captures and a
+full enrollment runs in TrustZone; saving a finger needs a Gatekeeper token ([notes](docs/drivers/secure-world.md)).
 
-**Fingerprint - partial, experimental (published unfinished):** two pending `qcom_scm` patches
-(`tools/linux/kernel/pending/`) + the `duo_qsee` module (`tools/linux/drivers/duo-qsee/`). The phone's own
-fingerprint app loads in TrustZone, the FPC1020 detects and captures, and a full 19-touch enrollment runs. Saving a
-finger still needs a Gatekeeper-signed token - where we stopped ([notes](docs/drivers/secure-world.md)).
+No firmware or Microsoft files included; the phone's own partitions supply them at boot.
 
-No firmware or Microsoft files are included; the phone's own partitions supply them at boot.
+## postmarketOS, then Debian
+- **postmarketOS v25.06 came first.** We added the Duo's second screen to Phosh (both panels in phoc, each touchscreen
+  on its own panel; the shell bar stays on one). Every driver worked; `duo-health` (31 tests) passed with 0 failures.
+- **Debian 13 "trixie" next**, for KDE Plasma Mobile's dual-screen support and desktop apps like VS Code. Also:
+  Waydroid (Android apps), PipeWire, libcamera, [Hingeboard](https://github.com/brysonwf/hingeboard) (laptop mode:
+  keyboard on one screen, trackpad desktop on the other), [Porchlight](https://github.com/brysonwf/porchlight)
+  (OpenSnitch firewall UI).
+- Same kernel and hardware services (`tools/linux/system`) for both.
+
+**GPU benchmarks (glmark2, 1587x2118):** terrain 74 fps, refract 59, shadow 333, jellyfish 387, ideas 703; vkcube 59
+fps. Ten minutes of the heaviest scenes held 585 MHz at 58 °C, no throttling.
 
 ## What's where
 - `tools/linux/kernel/` - patch series + `build.sh`
 - `tools/linux/system/` - hardware services
 - `tools/linux/debian/` - Debian setup
 - `tools/linux/abl/`, `make-*.sh` - RAM boot image
-- `docs/` - research notes for every driver, the decoded WCD9340/WSA8815 speaker register traces (useful for Windows
-  on ARM / WOA-Project driver ports), and the Duo 1 bootloader facts
-
-Build and boot: [INSTALL.md](INSTALL.md).
+- `docs/` - driver notes, decoded WCD9340/WSA8815 speaker traces (for Windows on ARM / WOA ports), bootloader facts
 
 ## License
-GPL-2.0-or-later, except kernel code (GPL-2.0-only, like Linux) and device trees (BSD-3-Clause).
-Each file says which in its `SPDX-License-Identifier` line.
+GPL-2.0-or-later, except kernel code (GPL-2.0-only, like Linux) and device trees (BSD-3-Clause). See each file's
+`SPDX-License-Identifier`.
 
 ## Credits
 Upstream patch authors (see each patch), Microsoft's GPL spi-hid driver, the WOA-Project (gus33000 and others),
@@ -90,19 +72,15 @@ Debian, Alpine, libcamera, PipeWire, KDE Plasma Mobile. The penguin is inspired 
 (original art, `tools/linux/bootanim/CREDITS.md`).
 
 ## How we bricked our phone
-We were packaging everything into an installer and, during experimental testing, **accidentally bricked our phone**.
-The test locked the bootloader to our own signing key: it wrote `boot_a` + a signed `vbmeta_a`, flipped the slot flags,
-enrolled the key and locked. The phone now boots nothing, not even Microsoft's images.
-
-That installer is separate and **not published** - none of its code is here. (The RAM images do carry standard disk
-tools like `sgdisk` and `qbootctl`; don't use them on boot partitions without a backup.)
-
-**If you modify a Duo 1:** never relock the bootloader. There is no public recovery loader.
+While packaging everything into an installer, experimental testing **accidentally bricked our phone**: the test wrote
+`boot_a` + a self-signed `vbmeta_a`, flipped the slot flags, enrolled our key and locked the bootloader. It now boots
+nothing, not even Microsoft's images. That installer is **not published** - none of its code is here. (The RAM images
+carry standard disk tools like `sgdisk` and `qbootctl`; don't use them on boot partitions without a backup.)
+Details: [docs/brick-record.md](docs/brick-record.md). **Modifying a Duo 1? Never relock the bootloader** - there is no
+public recovery loader.
 
 ## Related projects
-- [WOA-Project](https://github.com/WOA-Project) - Windows on ARM and UEFI for the Surface Duo
-- [postmarketOS](https://postmarketos.org) and the sm8150-mainline community - mainline Linux on Qualcomm phones
-- [duo-de](https://github.com/Archfx/duo-de) - a custom Android ROM for the Surface Duo
+[WOA-Project](https://github.com/WOA-Project) (Windows on ARM, UEFI) ·
+[postmarketOS](https://postmarketos.org) / sm8150-mainline · [duo-de](https://github.com/Archfx/duo-de) (Android ROM)
 
-## How this was made
 Engineered by Claude (Anthropic's AI); Bryson directed and tested. Bug reports: GitHub issues.
