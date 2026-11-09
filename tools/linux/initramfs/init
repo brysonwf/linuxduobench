@@ -1,9 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Surface Duo mainline test initramfs: USB-serial shell + audio bring-up helpers.
-# Probe mode (kernel cmdline "duo.probe=1"): after ~25 s, write a diagnostic log to the GPT partition
-# named exactly "metadata" (Android FBE metadata; we blank it before every Android boot anyway — the Duo has no logdump) and reboot, so TWRP can read the log back
-# with: dd if=/dev/block/sda3 bs=4096 count=2048 | strings   (look for DUOLOG1)
+# Probe mode (kernel cmdline "duo.probe=1"): after ~25 s, write a diagnostic log to /run/duolog (read it over SSH).
+# (Until 2026-11-09 these logs were dd'd onto the "metadata" partition - that holds Android's encryption metadata, so
+#  nothing here writes it any more: a RAM boot must never change the phone.)
 # PATH first: a stage-1 ramdisk (abl-stage1) hands over PATH=/bin, and insmod lives in /sbin
 export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
@@ -243,13 +243,8 @@ echo "duo-linux usb gadget udc=[$UDC]" > /dev/kmsg
 while true; do setsid sh -c 'exec /bin/sh -l </dev/ttyGS0 >/dev/ttyGS0 2>&1'; sleep 1; done
 ) &
 
-to_metadata () { # write file $1 to the GPT partition named exactly "metadata"
-  for b in /sys/class/block/*; do
-    if grep -qx 'PARTNAME=metadata' $b/uevent 2>/dev/null; then
-      dd if="$1" of=/dev/$(basename $b) bs=4096 conv=sync 2>/dev/null && sync
-      echo "duo-linux wrote $1 to $(basename $b)" > /dev/kmsg
-    fi
-  done
+keep_log () { # keep file $1 in /run (RAM) for SSH - never on a partition
+  mkdir -p /run; cp "$1" /run/ && echo "duo-linux: log kept in /run/$(basename "$1")" > /dev/kmsg
 }
 
 # Half-garbled panel (2026-11-04 21:40, docs/research/33): a DSI FIFO error during the first panel init ("dsi_err_worker:
@@ -597,8 +592,8 @@ if ! grep -q 'duo.nobt=1' /proc/cmdline; then (
   echo "duo-linux bt: hci0 address set, bluetoothd started" > /dev/kmsg
 ) & fi
 
-# Speaker test (cmdline "duo.audiotest=1"): set the Android speaker path, play a tone, log to metadata.
-# The system stays up afterwards (USB shell available); read the log back from TWRP (sda3, "AUDIOTEST1").
+# Speaker test (cmdline "duo.audiotest=1"): set the Android speaker path, play a tone, log to /run/audiotest.all.
+# The system stays up afterwards (USB shell available); read the log over SSH.
 if grep -q 'duo.audiotest=1' /proc/cmdline; then
   sleep 20
   mkdir -p /tmp
@@ -606,7 +601,7 @@ if grep -q 'duo.audiotest=1' /proc/cmdline; then
   sh /audiotest.sh /tmp/audiotest.log
   cat /tmp/audiotest.hdr /tmp/audiotest.log > /tmp/audiotest.all
   dmesg > /tmp/dmesg.txt; cat /tmp/dmesg.txt >> /tmp/audiotest.all
-  to_metadata /tmp/audiotest.all
+  keep_log /tmp/audiotest.all
 fi
 
 if grep -q 'duo.probe=1' /proc/cmdline; then
@@ -625,13 +620,6 @@ if grep -q 'duo.probe=1' /proc/cmdline; then
     echo "== dmesg"; dmesg
     echo "DUOLOG-END"
   } > $L 2>&1
-  for b in /sys/class/block/*; do
-    if grep -qx 'PARTNAME=metadata' $b/uevent 2>/dev/null; then
-      dd if=$L of=/dev/$(basename $b) bs=4096 conv=sync 2>/dev/null && sync
-      echo "duo-linux wrote probe log to $(basename $b)" > /dev/kmsg
-    fi
-  done
-  sleep 2
-  reboot -f
+  keep_log $L   # (no reboot any more: the log lives in RAM, so the shell stays up to read it)
 fi
 wait
