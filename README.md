@@ -47,7 +47,7 @@ Mainline v6.19 + 90 patches, tested on one phone:
 **postmarketOS came first.** postmarketOS v25.06 was the first full OS on this kernel. **We added the Duo's second
 screen to Phosh:** both panels as outputs of its compositor (phoc), each touchscreen mapped to its own panel, so apps
 run and respond to touch on either screen (Phosh's own top bar and app grid stay on one screen; neither Phosh nor
-Plasma Mobile can span them yet). Every driver above worked, and our `duo-health` check (31 tests) passing with 0 failures. It booted both through UEFI and
+Plasma Mobile can span them yet). Every driver above worked, and our `duo-health` check (31 tests) passed with 0 failures. It booted both through UEFI and
 straight from the phone's own bootloader. We then moved to Debian 13, for KDE Plasma Mobile's dual-screen support out
 of the box and desktop apps such as VS Code. Both ran the same kernel and the same distro-neutral hardware services
 (`tools/linux/system`).
