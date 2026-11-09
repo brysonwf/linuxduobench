@@ -37,7 +37,12 @@ Mainline v6.19 + 90 patches, tested on one phone:
 
 Debian 13 + Plasma Mobile runs on top.
 
-**Not yet:** GPS fix, pen, calls/SMS, fingerprint.
+**Not yet:** GPS fix, pen, calls/SMS.
+
+**Fingerprint - partial, experimental (published unfinished):** two pending `qcom_scm` patches
+(`tools/linux/kernel/pending/`) + the `duo_qsee` module (`tools/linux/drivers/duo-qsee/`). The phone's own
+fingerprint app loads in TrustZone, the FPC1020 detects and captures, and a full 19-touch enrollment runs. Saving a
+finger still needs a Gatekeeper-signed token - where we stopped ([notes](docs/drivers/secure-world.md)).
 
 No firmware or Microsoft files are included; the phone's own partitions supply them at boot.
 

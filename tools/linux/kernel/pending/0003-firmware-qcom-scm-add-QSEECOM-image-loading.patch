@@ -1,0 +1,190 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Bryson <10244083+brysonwf@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 12:49:09 -0500
+Subject: [PATCH] firmware: qcom: scm: add QSEECOM image loading
+
+The QSEECOM support only looks up and talks to trusted applications
+that something else already loaded. On phones the boot chain loads few
+of them (e.g. keymaster); the rest - and the common services library
+most of them link against - are loaded at runtime from the firmware
+partitions by the OS.
+
+Add the QSEE OS app-manager calls for that: load the services image
+(cmnlib), start an application and shut it down. The image is the
+split ELF as shipped (.mdt followed by the .bNN segment files) in a
+coherent buffer that TZ authenticates and copies into its own region.
+
+This change was written by an AI assistant (Claude, Anthropic) under the
+direction of Bryson, who tested it on a Surface Duo.
+
+Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
+---
+ drivers/firmware/qcom/qcom_scm.c       | 111 +++++++++++++++++++++++++
+ include/linux/firmware/qcom/qcom_scm.h |  18 ++++
+ 2 files changed, 129 insertions(+)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index 1a6f85e46..942755ab2 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -105,6 +105,9 @@ enum qcom_scm_qseecom_tz_svc {
+ enum qcom_scm_qseecom_tz_cmd_app {
+ 	QSEECOM_TZ_CMD_APP_SEND			= 1,
+ 	QSEECOM_TZ_CMD_APP_LOOKUP		= 3,
++	QSEECOM_TZ_CMD_APP_START		= 1,
++	QSEECOM_TZ_CMD_APP_SHUTDOWN		= 2,
++	QSEECOM_TZ_CMD_SERVICES_LOAD		= 7,
+ };
+ 
+ enum qcom_scm_qseecom_tz_cmd_info {
+@@ -1934,6 +1937,114 @@ int qcom_scm_qseecom_app_get_id(const char *app_name, u32 *app_id)
+ }
+ EXPORT_SYMBOL_GPL(qcom_scm_qseecom_app_get_id);
+ 
++/*
++ * Load a QSEE image (a trusted application or the common services library) that the boot chain did not load: TZ
++ * reads the split ELF from @img - the .mdt (ELF + program headers, @mdt_len bytes) followed by the segment files
++ * .b00 ... .bNN - authenticates it and copies it into its own region, so the buffer is freed again afterwards.
++ */
++static int qcom_scm_qseecom_load_image(u32 cmd, const void *img, size_t mdt_len, size_t img_len,
++				       struct qcom_scm_qseecom_resp *res)
++{
++	struct qcom_scm_desc desc = {};
++	dma_addr_t phys;
++	void *buf;
++	int ret;
++
++	if (!img_len || mdt_len > img_len)
++		return -EINVAL;
++
++	buf = dma_alloc_coherent(__scm->dev, img_len, &phys, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++	memcpy(buf, img, img_len);
++
++	desc.owner = QSEECOM_TZ_OWNER_QSEE_OS;
++	desc.svc = QSEECOM_TZ_SVC_APP_MGR;
++	desc.cmd = cmd;
++	desc.arginfo = QCOM_SCM_ARGS(3);
++	desc.args[0] = mdt_len;
++	desc.args[1] = img_len;
++	desc.args[2] = phys;
++
++	ret = qcom_scm_qseecom_call(&desc, res);
++	dma_free_coherent(__scm->dev, img_len, buf, phys);
++	return ret;
++}
++
++/**
++ * qcom_scm_qseecom_services_load() - Load the QSEE common services library (cmnlib/cmnlib64).
++ * @img:     the .mdt followed by the .bNN segment files
++ * @mdt_len: size of the .mdt part
++ * @img_len: total size
++ *
++ * Return: zero on success, -EIO if the secure world refused it.
++ */
++int qcom_scm_qseecom_services_load(const void *img, size_t mdt_len, size_t img_len)
++{
++	struct qcom_scm_qseecom_resp res = {};
++	int ret = qcom_scm_qseecom_load_image(QSEECOM_TZ_CMD_SERVICES_LOAD, img, mdt_len, img_len, &res);
++
++	if (ret)
++		return ret;
++	if (res.result != QSEECOM_RESULT_SUCCESS) {
++		dev_err(__scm->dev, "qseecom: services image refused (result %#llx)\n", res.result);
++		return -EIO;
++	}
++	return 0;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_qseecom_services_load);
++
++/**
++ * qcom_scm_qseecom_app_start() - Load and start a QSEE trusted application.
++ * @img:     the .mdt followed by the .bNN segment files
++ * @mdt_len: size of the .mdt part
++ * @img_len: total size
++ * @app_id:  the started application's ID (for qcom_scm_qseecom_app_send())
++ *
++ * Return: zero on success, -EIO if the secure world refused it.
++ */
++int qcom_scm_qseecom_app_start(const void *img, size_t mdt_len, size_t img_len, u32 *app_id)
++{
++	struct qcom_scm_qseecom_resp res = {};
++	int ret = qcom_scm_qseecom_load_image(QSEECOM_TZ_CMD_APP_START, img, mdt_len, img_len, &res);
++
++	if (ret)
++		return ret;
++	if (res.result != QSEECOM_RESULT_SUCCESS) {
++		dev_err(__scm->dev, "qseecom: app refused (result %#llx type %#llx data %#llx)\n",
++			res.result, res.resp_type, res.data);
++		return -EIO;
++	}
++	*app_id = res.data;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_qseecom_app_start);
++
++/**
++ * qcom_scm_qseecom_app_shutdown() - Stop a QSEE trusted application started with qcom_scm_qseecom_app_start().
++ * @app_id: its ID
++ *
++ * Return: zero on success.
++ */
++int qcom_scm_qseecom_app_shutdown(u32 app_id)
++{
++	struct qcom_scm_desc desc = {};
++	struct qcom_scm_qseecom_resp res = {};
++	int ret;
++
++	desc.owner = QSEECOM_TZ_OWNER_QSEE_OS;
++	desc.svc = QSEECOM_TZ_SVC_APP_MGR;
++	desc.cmd = QSEECOM_TZ_CMD_APP_SHUTDOWN;
++	desc.arginfo = QCOM_SCM_ARGS(1);
++	desc.args[0] = app_id;
++
++	ret = qcom_scm_qseecom_call(&desc, &res);
++	if (ret)
++		return ret;
++	return res.result == QSEECOM_RESULT_SUCCESS ? 0 : -EIO;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_qseecom_app_shutdown);
++
+ /**
+  * qcom_scm_qseecom_app_send() - Send to and receive data from a given QSEE app.
+  * @app_id:   The ID of the target app.
+diff --git a/include/linux/firmware/qcom/qcom_scm.h b/include/linux/firmware/qcom/qcom_scm.h
+index a55ca7712..b5483c384 100644
+--- a/include/linux/firmware/qcom/qcom_scm.h
++++ b/include/linux/firmware/qcom/qcom_scm.h
+@@ -156,6 +156,9 @@ int qcom_scm_shm_bridge_delete(u64 handle);
+ #ifdef CONFIG_QCOM_QSEECOM
+ 
+ int qcom_scm_qseecom_app_get_id(const char *app_name, u32 *app_id);
++int qcom_scm_qseecom_services_load(const void *img, size_t mdt_len, size_t img_len);
++int qcom_scm_qseecom_app_start(const void *img, size_t mdt_len, size_t img_len, u32 *app_id);
++int qcom_scm_qseecom_app_shutdown(u32 app_id);
+ int qcom_scm_qseecom_app_send(u32 app_id, void *req, size_t req_size,
+ 			      void *rsp, size_t rsp_size);
+ 
+@@ -166,6 +169,21 @@ static inline int qcom_scm_qseecom_app_get_id(const char *app_name, u32 *app_id)
+ 	return -EINVAL;
+ }
+ 
++static inline int qcom_scm_qseecom_services_load(const void *img, size_t mdt_len, size_t img_len)
++{
++	return -EINVAL;
++}
++
++static inline int qcom_scm_qseecom_app_start(const void *img, size_t mdt_len, size_t img_len, u32 *app_id)
++{
++	return -EINVAL;
++}
++
++static inline int qcom_scm_qseecom_app_shutdown(u32 app_id)
++{
++	return -EINVAL;
++}
++
+ static inline int qcom_scm_qseecom_app_send(u32 app_id,
+ 					    void *req, size_t req_size,
+ 					    void *rsp, size_t rsp_size)
