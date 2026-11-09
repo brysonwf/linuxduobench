@@ -5,22 +5,22 @@
 
 Mainline Linux drivers and a Debian system layer for the **Microsoft Surface Duo (1st gen, SM8150)**.
 
-> **Source-only developer release.** This is a kernel patch series, the userspace that drives the Duo's hardware,
-> and the scripts that build a RAM-booted Debian image. **There is no installer here, on purpose.** Our installer
-> wrote the phone's boot partitions and changed its bootloader state. On our only stock test phone that run ended
-> with a phone that boots no image at all, not even Microsoft's own (fastboot only). We know which steps did it, not
-> yet which internal state they broke. Until we do, nothing in this repository writes a phone's boot partitions,
-> partition table or lock state.
-> Booting the image described in [INSTALL.md](INSTALL.md) is RAM-only: `fastboot boot` changes nothing on the phone.
+## The drivers are not the installer
 
-**None of the code that bricked our phone is in this repository.** The brick was caused by our installer, which:
-- wrote `boot_a` and a `vbmeta_a` signed with our own key;
-- flipped the A/B slot flags with `sgdisk`;
-- enrolled that key (`avb_custom_key`) and locked the bootloader.
+This repository is **drivers and userspace only**:
+- the kernel patch series;
+- the services that bring the hardware up;
+- the Debian setup;
+- the scripts that build a boot image you start from RAM with `fastboot boot`, which changes nothing on the phone.
 
-This repository contains no installer, no AVB signing, no lock or unlock step and no slot-switching script. No code
-here writes the boot, vbmeta or dtbo partitions or a partition table, and nothing runs such a step automatically.
-Two caveats:
+**The installer is a separate program and is not published.** Our installer bricked our only stock test phone. It
+wrote `boot_a` and a `vbmeta_a` signed with our own key, flipped the A/B slot flags with `sgdisk`, enrolled that key
+(`avb_custom_key`) and locked the bootloader. After that the phone boots no image at all, not even Microsoft's own
+(fastboot only). We know which steps did it, not yet which internal state they broke.
+
+**None of that code is here.** There is no installer, no AVB signing, no lock or unlock step and no slot-switching
+script. No code in this repository writes the boot, vbmeta or dtbo partitions, a partition table or the bootloader's
+lock state, and the drivers and services never touch them. Two caveats:
 - The RAM images include standard disk tools (`sgdisk`, `qbootctl`) for developers to use by hand. Don't point them at
   boot partitions or slot flags without a backup.
 - The Debian setup installs Debian's `qbootctl` package. Its service marks the running slot "successful" at boot, as
