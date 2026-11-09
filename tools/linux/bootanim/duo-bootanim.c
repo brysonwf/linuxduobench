@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * duo-bootanim - the Linux Duo Bench boot animation on the Surface Duo's two panels (2026-11-07).
+ * The penguin is inspired by Tux, created by Larry Ewing with The GIMP (original art, not a copy; bootanim/CREDITS.md).
  *
  * Art: the approved "Linux Duo Bench boot art" (penguin with a headlamp on the TOP = camera screen = DSI-2, the lamp's
  * circle on the BOTTOM = keyboard screen = DSI-1, laptop posture), 900x675 P6 PPM frames shown at exactly 2x, rotated

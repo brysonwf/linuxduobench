@@ -7,20 +7,23 @@ Subject: [PATCH] video/logo: Surface Duo workbench penguin (local, not for
 This patch was written by Claude (Anthropic's AI assistant) under the direction of Bryson, who reviewed and
 tested it on a Surface Duo.
 
+The penguin is inspired by Tux, created by Larry Ewing with The GIMP (original art, not a copy; bootanim/CREDITS.md).
+
 Signed-off-by: Bryson <10244083+brysonwf@users.noreply.github.com>
 ---
- drivers/video/logo/logo_linux_clut224.ppm | 1864 +++------------------
- 1 file changed, 262 insertions(+), 1602 deletions(-)
+ drivers/video/logo/logo_linux_clut224.ppm | 1865 +++------------------
+ 1 file changed, 263 insertions(+), 1602 deletions(-)
 
 diff --git a/drivers/video/logo/logo_linux_clut224.ppm b/drivers/video/logo/logo_linux_clut224.ppm
 index 3c14e43b8..befdaa0aa 100644
 --- a/drivers/video/logo/logo_linux_clut224.ppm
 +++ b/drivers/video/logo/logo_linux_clut224.ppm
-@@ -1,1604 +1,264 @@
+@@ -1,1604 +1,265 @@
  P3
 -# Standard 224-color Linux logo
 -80 80
 +# Surface Duo workbench logo (tools/linux/splash/make-penguin-logo.py)
++# Penguin inspired by Tux, created by Larry Ewing with The GIMP (original art)
 +320 260
  255
 -  0   0   0   0   0   0   0   0   0   0   0   0

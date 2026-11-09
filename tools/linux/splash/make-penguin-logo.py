@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
+# The penguin is inspired by Tux, created by Larry Ewing with The GIMP (original art, not a copy; bootanim/CREDITS.md).
 """Surface Duo workbench boot logo (a really fat penguin splash loading logo,
 potentially with a workbench behind him and a lot of daily carry stuff on him). Original art drawn from simple shapes
 by this script (no image libraries): a very fat penguin in front of a workbench + pegboard, wearing a headlamp, a

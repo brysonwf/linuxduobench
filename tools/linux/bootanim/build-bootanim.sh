@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
+# The penguin is inspired by Tux, created by Larry Ewing with The GIMP (original art, not a copy; bootanim/CREDITS.md).
 # Build the boot animation player + its frame set (WSL root).
 # usage: build-bootanim.sh <repo> <art-dir: ".../linux-duo-bench-boot-art"> <out-dir>
 #   <out-dir>/duo-bootanim            static arm64 binary

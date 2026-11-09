@@ -59,9 +59,14 @@ Microsoft do, and what failed and what worked. It also has the decoded speaker r
 research most useful to a Windows driver port (WOA-Project), e.g. the WCD9340/WSA8815 speaker path.
 
 ## License
-- Kernel code (the patches in `tools/linux/kernel/series`, and the camera driver): **GPL-2.0-only**, like Linux.
+- **Everything we wrote outside the kernel** (scripts, services, tools, docs): **GPL-2.0-or-later**, so GPL-3
+  projects can use it.
+- **Kernel code** (the patches in `tools/linux/kernel/series`, and the camera driver): **GPL-2.0-only**, because it
+  has to be. Most patches edit files that are GPL-2.0-only in Linux. Others are third-party patches whose authors
+  chose GPL-2.0-only. Our own new drivers (panel, IMX351 camera, IPA v4.1 data) follow or copy GPL-2.0-only drivers.
   Upstream patches keep their authors and headers.
-- Everything else we wrote: **GPL-2.0-or-later**, so GPL-3 projects can use it.
+- **Device-tree files** we added: **BSD-3-Clause** (the kernel's usual choice for DT, and usable by GPL-2.0-or-later
+  and GPL-3 projects).
 - Each file names its license in its `SPDX-License-Identifier` line. [LICENSE](LICENSE) holds the GPL-2.0 text.
 
 ## Using this in another project
