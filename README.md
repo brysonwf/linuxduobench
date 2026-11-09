@@ -12,6 +12,19 @@ Mainline Linux drivers and a Debian system layer for the **Microsoft Surface Duo
 > understood, nothing in this repository writes a phone's boot partitions, partition table or lock state.
 > Booting the image described in [INSTALL.md](INSTALL.md) is RAM-only: `fastboot boot` changes nothing on the phone.
 
+**None of the code that bricked our phone is in this repository.** The brick was caused by our installer, which:
+- wrote `boot_a` and a `vbmeta_a` signed with our own key;
+- flipped the A/B slot flags with `sgdisk`;
+- enrolled that key (`avb_custom_key`) and locked the bootloader.
+
+This repository contains no installer, no AVB signing, no lock or unlock step and no slot-switching script. No code
+here writes the boot, vbmeta or dtbo partitions or a partition table, and nothing runs such a step automatically.
+Two caveats:
+- The RAM images include standard disk tools (`sgdisk`, `qbootctl`) for developers to use by hand. Don't point them at
+  boot partitions or slot flags without a backup.
+- The Debian setup installs Debian's `qbootctl` package. Its service marks the running slot "successful" at boot, as
+  Android does on every boot.
+
 **Status (2026-11):** every driver below works on one phone (ours). Nobody else has run this yet.
 
 ## What works (mainline v6.19 + this series)
