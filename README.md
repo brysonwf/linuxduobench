@@ -10,8 +10,25 @@ written to the phone). **No installer.** Nothing here writes boot partitions, th
 
 ## What works
 Mainline v6.19 + 90 patches, tested on one phone:
-both screens + touch, GPU, HDMI via dock, speaker (Microsoft's own DSP tuning) + mics, camera (autofocus, flash),
-sensors incl. hinge angle, Wi-Fi, Bluetooth, modem, charger, suspend, all 8 cores, video decode/encode, haptics.
+- **Displays** - `panel-microsoft-surface-duo` (ours) on msm DSI/DPU with DSC
+- **Touch** - `spi-hid-duo` (Microsoft's spi-hid, ported) + iptsd
+- **GPU** - msm Adreno 640 + Mesa freedreno/Turnip
+- **HDMI out (USB-C dock)** - msm DisplayPort + `qcom-pmic-typec` + FSA4480
+- **Speaker** - `wcd934x` codec + `wsa881x` amp + q6 ADSP (Microsoft's tuning)
+- **Microphones** - `wcd934x` DMICs
+- **Camera** - `imx351` (ours) + `qcom-camss` + `dw9719` autofocus + `leds-qcom-flash`
+- **Sensors (accel, compass, hinge, light/proximity)** - SLPI via `fastrpc` + hexagonrpcd + libssc
+- **Wi-Fi** - `ath10k` (WCN3990)
+- **Bluetooth** - `hci_qca` (WCN3990)
+- **Modem / mobile data** - `qcom_q6v5_mss` + ModemManager / `ipa` v4.1
+- **Charger** - `qcom_smbx`
+- **Fuel gauges** - `bq27xxx` (two BQ27742)
+- **Storage** - `ufs-qcom`
+- **Video decode/encode** - `venus`
+- **Haptics** - `da7280` (force feedback)
+- **Power key** - `qcom-pon` + `pm8941-pwrkey`
+- **CPU** - all 8 cores incl. the 2.84 GHz prime core; suspend (s2idle)
+
 Debian 13 + Plasma Mobile runs on top.
 
 **Not yet:** GPS fix, pen, calls/SMS, fingerprint.
