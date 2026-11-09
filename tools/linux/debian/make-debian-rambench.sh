@@ -6,7 +6,7 @@
 # Release/Packages signatures are not checked here - the Packages index comes over https), unpacked into a work tree,
 # and only the programs we name + the libraries they link (DT_NEEDED walk) are kept - like make-boot-initramfs.sh.
 #   MODE=boot  (default) what a phone's boot image needs: /init + busybox, the panel/touch modules, LUKS unlock
-#              (cryptsetup + unl0kr + udev), and the installer (dropbear, duo-install, gdisk, e2fsprogs, debootstrap,
+#              (cryptsetup + unl0kr + udev), and the installer (dropbear, duo-install, qbootctl, e2fsprogs, debootstrap,
 #              gpgv, Debian's keyring). Must fit ABL's boot image (19 MB boots).
 #   MODE=bench the dev/rescue shell on top: Wi-Fi, Bluetooth, sound, debug tools, every module of the kernel build.
 # usage: [MODE=boot|bench] make-debian-rambench.sh <repo> <full-initramfs.cpio.gz (for lib/duo modules)> <out.cpio.gz>
@@ -17,7 +17,7 @@ OUT=$(readlink -f "$OUT"); MIRROR=http://deb.debian.org/debian; C=/root/deb-cach
 W=$(mktemp -d); F=$W/full; S=$W/slim; mkdir -p $F $S
 [ -f $C/Packages ] && [ -n "$(find $C/Packages -mmin -1440)" ] || curl -sfL https://deb.debian.org/debian/dists/trixie/main/binary-arm64/Packages.xz | xz -d > $C/Packages
 
-PK="busybox-static kmod util-linux cryptsetup-bin unl0kr udev dropbear-bin gdisk e2fsprogs zstd debootstrap gpgv
+PK="busybox-static kmod util-linux cryptsetup-bin unl0kr udev dropbear-bin qbootctl e2fsprogs zstd debootstrap gpgv
     debian-archive-keyring grep perl-base dash coreutils dpkg"
 BENCH="iproute2 iw wpasupplicant bluez alsa-utils evtest strace less nano htop tmux i2c-tools usbutils file
        dbus-daemon libqmi-utils rmtfs tqftpserv qrtr-tools"
@@ -75,7 +75,7 @@ echo "busybox applets: $(echo "$AP" | wc -w)"
 [ -L $S/usr/bin/sh ] || ln -s busybox $S/usr/bin/sh
 # programs (real binaries win over busybox applets of the same name)
 P="usr/sbin/cryptsetup usr/bin/unl0kr usr/bin/udevadm usr/lib/systemd/systemd-udevd usr/bin/kmod usr/sbin/blkid
-   usr/sbin/switch_root usr/bin/mountpoint usr/sbin/dropbear usr/sbin/sgdisk usr/sbin/mke2fs usr/sbin/e2fsck usr/bin/zstd
+   usr/sbin/switch_root usr/bin/mountpoint usr/sbin/dropbear usr/bin/qbootctl usr/sbin/mke2fs usr/sbin/e2fsck usr/bin/zstd
    usr/bin/gpgv usr/bin/grep usr/bin/dash usr/sbin/chroot usr/bin/dpkg-deb"
 # (dpkg-deb: debootstrap's preferred extractor; without it under dash it picked `ar` = a busybox link, and failed)
 # (dash + coreutils' chroot: Debian's busybox-static PREFERS ITS APPLETS - `chroot X dpkg` ran busybox's dpkg inside the
@@ -133,6 +133,6 @@ chmod 700 $S/root/.ssh; echo duo > $S/etc/hostname
 [ -n "${KEYS:-}" ] && { tr -d '\r' < "$KEYS" > $S/root/.ssh/authorized_keys; chmod 600 $S/root/.ssh/authorized_keys; }
 (cd $S && find . | sort | cpio -o -H newc -R 0:0 --quiet | gzip -9 > "$OUT")
 echo "Debian RAM bench ($MODE): $(du -h "$OUT" | cut -f1) ($(find $S -type f | wc -l) files, $(du -sh $S | cut -f1) unpacked)"
-for c in sh busybox insmod blkid switch_root mountpoint cryptsetup unl0kr udevd udevadm dropbear duo-install sgdisk mkfs.ext4 e2fsck debootstrap gpgv grep devmem; do
+for c in sh busybox insmod blkid switch_root mountpoint cryptsetup unl0kr udevd udevadm dropbear duo-install qbootctl mkfs.ext4 e2fsck debootstrap gpgv grep devmem; do
 	p=$(cd $S && ls -d usr/bin/$c usr/sbin/$c 2>/dev/null | head -1); printf '%s:%s ' $c "${p:+ok}"; done; echo
 rm -rf $W

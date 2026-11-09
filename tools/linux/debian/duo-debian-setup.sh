@@ -111,7 +111,7 @@ systemctl enable nftables ssh sddm NetworkManager duo-hw duo-watchdog duo-autobr
   duo-charger duo-bt-addr duo-sensors duo-modem duo-mtp > /dev/null 2>&1
 # (the slot self-recovery is not in the source-only public release: only when its unit exists)
 [ -f /etc/systemd/system/duo-boot-check.timer ] && systemctl enable duo-boot-check.timer > /dev/null 2>&1
-# self-recovery: the slot is marked good only by duo-boot-check (2 min, healthy); qbootctl's own "mark at once" unit is
+# self-recovery: the slot is marked good only by duo-boot-check (45 s, healthy); qbootctl's own "mark at once" unit is
 # masked (installer.md "Self-recovery")
 [ -f /etc/systemd/system/duo-boot-check.timer ] && { systemctl mask qbootctl.service > /dev/null 2>&1 || true; }
 # ModemManager: started by duo-modem once the modem is in low-power (never straight online - the QLink crash)

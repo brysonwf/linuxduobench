@@ -1,5 +1,8 @@
 # Linux Duo Bench
 
+> **Not actively maintained.** Forks and patches are welcome. Open items and everything we learned are in
+> [`docs/`](docs/README.md).
+
 Mainline Linux drivers and a Debian system layer for the **Microsoft Surface Duo (1st gen, SM8150)**.
 
 > **Source-only developer release.** This is a kernel patch series, the userspace that drives the Duo's hardware,
