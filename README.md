@@ -5,7 +5,7 @@
 
 Mainline Linux drivers and a Debian system layer for the **Microsoft Surface Duo (1st gen, SM8150)**.
 
-## The drivers are not the installer
+## Drivers only
 
 This repository is **drivers and userspace only**:
 - the kernel patch series;
@@ -13,20 +13,8 @@ This repository is **drivers and userspace only**:
 - the Debian setup;
 - the scripts that build a boot image you start from RAM with `fastboot boot`, which changes nothing on the phone.
 
-**The installer is a separate program and is not published.** We were trying to package everything into an
-installer, and during some experimental testing we **accidentally bricked our phone**. The test was whether the phone
-would boot our own system with the bootloader locked to our own signing key, which goes beyond what this release
-does. Our experimental installer wrote `boot_a` and a `vbmeta_a` signed with our own key, flipped the A/B slot flags with `sgdisk`, enrolled that key
-(`avb_custom_key`) and locked the bootloader. After that the phone boots no image at all, not even Microsoft's own
-(fastboot only). We know which steps did it, not yet which internal state they broke.
-
-**None of that code is here.** There is no installer, no AVB signing, no lock or unlock step and no slot-switching
-script. No code in this repository writes the boot, vbmeta or dtbo partitions, a partition table or the bootloader's
-lock state, and the drivers and services never touch them. Two caveats:
-- The RAM images include standard disk tools (`sgdisk`, `qbootctl`) for developers to use by hand. Don't point them at
-  boot partitions or slot flags without a backup.
-- The Debian setup installs Debian's `qbootctl` package. Its service marks the running slot "successful" at boot, as
-  Android does on every boot.
+There is no installer here. Nothing in this repository writes the phone's boot partitions, partition table or
+bootloader lock state (see [How we bricked our phone](#how-we-bricked-our-phone) at the end).
 
 **Status (2026-11):** every driver below works on one phone (ours). Nobody else has run this yet.
 
@@ -105,6 +93,28 @@ Please use GitHub issues. Include `uname -r`, what you ran, and the output.
 - Debian, Alpine Linux, libcamera, PipeWire, KDE Plasma Mobile.
 - The Linux Duo Bench penguin is inspired by **Tux**, created by **Larry Ewing** with The GIMP. The art here is an
   original drawing made in code (see `tools/linux/bootanim/CREDITS.md`).
+
+## How we bricked our phone
+We were trying to package everything into an installer, and during some experimental testing we **accidentally
+bricked our phone**. The test was whether the phone would boot our own system with the bootloader locked to our own
+signing key, which goes beyond what this release does. The experimental installer:
+- wrote `boot_a` and a `vbmeta_a` signed with our own key;
+- flipped the A/B slot flags with `sgdisk`;
+- enrolled that key (`avb_custom_key`) and locked the bootloader.
+
+After that the phone boots no image at all, not even Microsoft's own (fastboot only). We know which steps did it, not
+yet which internal state they broke.
+
+**The installer is a separate program and is not published.** This repository has no installer, no AVB signing, no
+lock or unlock step and no slot-switching script. Its code never writes the boot, vbmeta or dtbo partitions, a
+partition table or the bootloader's lock state. Two caveats:
+- The RAM images include standard disk tools (`sgdisk`, `qbootctl`) for developers to use by hand. Don't point them at
+  boot partitions or slot flags without a backup.
+- The Debian setup installs Debian's `qbootctl` package. Its service marks the running slot "successful" at boot, as
+  Android does on every boot.
+
+**If you modify a Surface Duo 1:** never relock the bootloader, and never write boot, vbmeta or dtbo with your own keys.
+There is no public recovery loader (EDL firehose) for this phone.
 
 ## How this was made
 Engineered by Claude (Anthropic's AI), working on the phone end to end, with Bryson directing and testing.
